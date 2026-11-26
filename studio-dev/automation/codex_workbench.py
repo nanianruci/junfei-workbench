@@ -19,8 +19,9 @@ def call(action, proposal=None, *, workbench_url=None):
     token = os.environ.get('JUNFEI_CODEX_TOKEN')
     if not token:
         raise ValueError('请先从商品页取得配对码并设置 JUNFEI_CODEX_TOKEN')
+    default = 'http://127.0.0.1:' + os.environ.get('JUNFEI_PORT', '18769')
     base = urlsplit(workbench_url if workbench_url is not None else
-                    os.environ.get('JUNFEI_CODEX_URL', 'http://127.0.0.1:18765'))
+                    os.environ.get('JUNFEI_CODEX_URL', default))
     local = base.hostname in ('localhost', '127.0.0.1', '::1')
     if (not base.hostname or base.username or base.password or base.path not in ('', '/')
             or base.query or base.fragment or (base.scheme != 'https' and not (local and base.scheme == 'http'))):
@@ -52,6 +53,8 @@ def main(argv=None):
     subcommands.add_parser('status')
     receipt = subcommands.add_parser('receipt', help='读取指定请求的审批和任务交接记录')
     receipt.add_argument('request_id')
+    heartbeat = subcommands.add_parser('heartbeat', help='为当前会话所领取的原派单续租')
+    heartbeat.add_argument('request_id')
     inbox = subcommands.add_parser('next', help='接收后端为本款商品派发的任务')
     inbox.add_argument('--wait', type=int, default=0, metavar='SECONDS')
     review = subcommands.add_parser('review', help='交回指定派单的核对结果')
@@ -60,6 +63,8 @@ def main(argv=None):
     try:
         if args.command == 'receipt':
             result = call('receipt?' + urlencode({'requestId': args.request_id}))
+        elif args.command == 'heartbeat':
+            result = call('heartbeat', {'requestId': args.request_id})
         elif args.command == 'review':
             result = call('review', json.loads(args.result.read_text(encoding='utf-8-sig')))
         elif args.command == 'next':

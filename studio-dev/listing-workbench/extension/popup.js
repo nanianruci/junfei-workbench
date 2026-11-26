@@ -1,5 +1,5 @@
 const defaultCollectorServer='http://127.0.0.1:18769';
-function isLocalCollector(url){return url.protocol==='http:'&&url.hostname==='127.0.0.1'&&['18765','18775'].includes(url.port)}
+function isLocalCollector(url){return url.protocol==='http:'&&url.hostname==='127.0.0.1'&&['18765','18768','18769','18775'].includes(url.port)}
 function collectorServerUrl(){const url=new URL(document.getElementById('serverUrl').value.trim()||defaultCollectorServer);if(url.username||url.password||url.pathname!=='/'||url.search||url.hash||!(url.protocol==='https:'||isLocalCollector(url)))throw Error('请输入HTTPS工作台根地址，或本机 http://127.0.0.1:18769');return url.origin}
 let binding=null;
 let targetCapture=null;

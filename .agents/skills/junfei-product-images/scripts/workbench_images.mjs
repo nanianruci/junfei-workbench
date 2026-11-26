@@ -9,7 +9,12 @@ export async function runJobs(descriptor){
  const task=await taskSpace(state.space),page=task.page(state.page);
  const origin=await page.evaluate(()=>location.origin);
  if(origin!==new URL(state.base).origin)throw new Error('当前页面不是目标工作台；请先在同一任务工作区打开已登录工作台');
- const persist=()=>fs.writeFile(descriptor,JSON.stringify(state,null,2));
+ const persist=async()=>{
+  const temporary=descriptor+'.'+process.pid+'.'+crypto.randomUUID()+'.tmp';
+  const handle=await fs.open(temporary,'wx');
+  try{await handle.writeFile(JSON.stringify(state,null,2));await handle.sync();}finally{await handle.close();}
+  await fs.rename(temporary,descriptor);
+ };
  const auth=await page.evaluate(async()=>await(await fetch('/api/auth/status')).json());
  if(!auth.user?.id)throw new Error('请先在当前工作台登录');
  if(state.accountId&&String(state.accountId)!==String(auth.user.id))throw new Error('登录账号与持久任务不同，未查询或提交');
@@ -26,6 +31,7 @@ export async function runJobs(descriptor){
  for(const [index,job] of state.jobs.entries()){
   try{
   const input=job.input;
+  if(!job.payload){
   if(input.referenceFiles!==undefined&&(!Array.isArray(input.referenceFiles)||input.referenceFiles.length>2))throw Error('最多补充2张原图，与主图合计不超过3张');
   for(const [key,file] of [['source',input.source],...(input.referenceFiles||[]).map((file,i)=>['reference'+i,file]),['mask',input.maskFile],['targetReference',input.targetReferenceFile]]){
    if(!file)continue;
@@ -34,9 +40,13 @@ export async function runJobs(descriptor){
     if(current!==job.uploads[key].sourceFileSha256)throw new Error('持久任务的原图或蒙版已改变；请新建版本目录');
    }else{job.uploads=job.uploads||{};job.uploads[key]=await upload(file);await persist();}
   }
-  if(!job.payload){
-   const source=job.uploads.source.url;
+   if(input.variantSource&&!job.association){
+    const prepared=await api('/api/image-engine/prepare-variant-source',{productId:input.productId,...input.variantSource});
+    job.association=prepared.association;await persist();
+   }
+   const source=input.generatedColourVariant?job.uploads.source.url:job.association?.sourceUpload||job.uploads?.source?.url;
    let references=[source,...(input.referenceFiles||[]).map((_,i)=>job.uploads['reference'+i].url)],mask,renderedImage,shaderReceipt,target=input.target,qualityCheckId,selectionTaskId;
+   if(input.generatedColourVariant)references.push(job.association.sourceUpload);
    if(input.reusePlateTaskId){
     const parent=(await api('/api/image-engine/task?id='+encodeURIComponent(input.reusePlateTaskId))).task;
     if(parent.productId!==input.productId||parent.request.referenceSha256?.[0]!==job.uploads.source.sourceFileSha256)throw new Error('复用背景必须是同账号商品的同一原片哈希');
@@ -56,6 +66,7 @@ export async function runJobs(descriptor){
     ({references,mask,target,renderedImage,shaderReceipt,qualityCheckId,selectionTaskId}=result);
    }
    job.payload={requestId:job.requestId,productId:input.productId,mode:input.mode,references,brief:input.brief,
+    sourceVariant:job.association?{receiptId:job.association.receiptId}:undefined,
     count:input.count||3,noText:input.noText!==false,layoutTemplateIds:input.layoutTemplateIds,
     preserveSourcePixels:input.preserveSourcePixels===true,neutralBackground:input.neutralBackground===true,repairTemplateId:input.repairTemplateId,editTask:input.editTask||'free',
     generatedColourVariant:input.generatedColourVariant,apparelSuite:input.apparelSuite,needOptimize:input.needOptimize===true,repairSize:input.repairSize||'',repairObjects:input.repairObjects,
@@ -66,8 +77,16 @@ export async function runJobs(descriptor){
    await persist();
   }
   if(!job.taskId){
-   job.submitState='pending';await persist();
-   const result=await api('/api/image-engine/start',job.payload);job.taskId=result.task.id;job.task=result.task;job.submitState='acknowledged';await persist();
+   let result;
+   if(job.submitState==='pending'){
+    result=await api('/api/image-engine/request?'+new URLSearchParams({productId:input.productId,requestId:job.requestId}));
+   }
+   if(!result?.task){
+    // The engine registers this unique request before any provider call.
+    job.submitState='pending';await persist();
+    result=await api('/api/image-engine/start',job.payload);
+   }
+   job.taskId=result.task.id;job.task=result.task;job.submitState='acknowledged';await persist();
   }
   const deadline=Date.now()+state.timeout*1000;
   while(true){
@@ -83,7 +102,8 @@ export async function runJobs(descriptor){
     catch(error){if(error.code!=='ENOENT')throw error;job.downloads=job.downloads.filter(d=>d.index!==result.index);}}
    const bytes=await page.evaluate(async({url,account})=>{const r=await fetch(url,{headers:{'X-Workspace-Account':String(account)}});if(!r.ok)throw new Error('下载HTTP '+r.status);return [...new Uint8Array(await r.arrayBuffer())];},{url:result.image,account:state.accountId});
    const raw=Buffer.from(bytes),sha256=crypto.createHash('sha256').update(raw).digest('hex');
-   if(result.sha256&&sha256!==result.sha256)throw new Error('服务端结果哈希与下载文件不符');
+   const expected=result.imageSha256||result.sha256;
+   if(expected&&sha256!==expected)throw new Error('服务端结果哈希与下载文件不符');
    const filename=path.join(state.output,String(index+1).padStart(2,'0')+'-'+job.taskId+'-'+String(result.index+1).padStart(2,'0')+'.png');
    try{const old=await fs.readFile(filename);if(crypto.createHash('sha256').update(old).digest('hex')!==sha256)throw new Error('目标文件已存在且内容不同');}
    catch(error){if(error.code!=='ENOENT')throw error;await fs.writeFile(filename,raw);}

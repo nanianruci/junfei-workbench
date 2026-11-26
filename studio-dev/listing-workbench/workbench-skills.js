@@ -15,15 +15,15 @@ function skillCatalogRow(skill) {
     const label = skill.route === 'agent' ? '打开任务中心' : '打开产品档案';
     action = `<a class="ds-button" href="${esc(workspaceRoutes[skill.route])}" data-skill-route="${esc(skill.route)}">${label}</a>`;
   }
-  return `<tr data-skill-id="${esc(skill.id)}">
-    <th scope="row"><strong>${esc(skill.name)}</strong>
+  return `<tr role="row" data-skill-id="${esc(skill.id)}">
+    <th scope="row" role="rowheader"><strong>${esc(skill.name)}</strong>
       ${skill.invocation ? `<code>${esc(skill.invocation)}</code>` : ''}
     </th>
-    <td><div class="skill-io"><span class="ds-muted">输入</span><span>${esc(skill.input)}</span>
+    <td class="skill-details" role="cell"><div class="skill-io"><span class="ds-muted">输入</span><span>${esc(skill.input)}</span>
       <span class="ds-muted">产出</span><span>${esc(skill.output)}</span></div></td>
-    <td><span class="ds-status" data-tone="${tone}">${status}</span></td>
-    <td data-skill-version>${version}</td>
-    <td>${action}</td>
+    <td class="skill-status" role="cell"><span class="ds-status" data-tone="${tone}">${status}</span></td>
+    <td class="skill-version" role="cell" data-skill-version>${version}</td>
+    <td class="skill-action" role="cell">${action}</td>
   </tr>`;
 }
 
@@ -37,10 +37,10 @@ function showSkillCatalog(node, data) {
     <section class="ds-panel" aria-labelledby="skillsGroup${i}">
       <div class="ds-panel-heading"><h2 id="skillsGroup${i}">${esc(group.label)}</h2></div>
       <div class="ds-table-wrap" tabindex="0" role="region" aria-label="${esc(group.label)}技能表格">
-        <table class="ds-table skill-table">
+        <table class="ds-table skill-table" role="table">
           <thead><tr><th scope="col">技能</th><th scope="col">输入与产出</th><th scope="col">状态</th>
             <th scope="col">版本</th><th scope="col">管理</th></tr></thead>
-          <tbody>${group.skills.map(skillCatalogRow).join('')}</tbody>
+          <tbody role="rowgroup">${group.skills.map(skillCatalogRow).join('')}</tbody>
         </table>
       </div>
     </section>`).join('');
@@ -77,7 +77,7 @@ window.renderWorkbenchSkills = function () {
   const content = document.getElementById('content');
   content.innerHTML = `<section class="ds skills-center" aria-labelledby="skillsTitle">
     <header class="ds-header">
-      <div><h1 id="skillsTitle">技能</h1><p class="ds-muted">查看生产流程使用的技能和输入输出，管理当前账号的文案与图片规则。</p></div>
+      <div class="wb-title-label"><h1 id="skillsTitle">技能</h1>${workbenchHelp('可查看技能的输入和产出，编辑当前账号的文案与图片规则，或复制 Codex 技能的调用语句。','技能')}</div>
       <a class="ds-button" href="/tasks" data-skill-history>查看任务记录</a>
     </header>
     <div class="skills-center" data-skill-content></div>

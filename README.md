@@ -2,7 +2,9 @@
 
 亚马逊商品档案、选品研究、Listing 文案、商品套图、颜色变体、智能修图与钧飞 ERP 交付的本地工作台。
 
-## 当前版本（2026-11-24）
+## 当前源码更新（2026-11-26）
+
+商品页的“运营状态与 Codex”可复制当前商品的原任务、图库确认和刊登回执。任务中心支持提交前淘汰和归档轮转。仓库复核记录列出了本次修复、测试结果及实机验收范围。[更新与上传前复核](studio-dev/listing-workbench/CHANGELOG.md#2026-11-26)
 
 - 商品作图使用“首色套图 / 颜色变体 / 智能修图”三个入口，接当前账号自己的 Codex Tools。
 - 默认七图为白底主图 1 张、细节 2 张、种草 3 张、尺码 1 张。细节和种草使用原模板；种草场景、模特及展示方式须有区别。适用的颜色共用有真实依据的尺码图。
@@ -27,7 +29,9 @@
 在仓库根目录运行：
 
 ```powershell
-Copy-Item studio-dev/automation/config.example.json studio-dev/automation/config.json
+if (-not (Test-Path -LiteralPath studio-dev/automation/config.json)) {
+    Copy-Item studio-dev/automation/config.example.json studio-dev/automation/config.json
+}
 python -m venv .venv
 .venv/Scripts/python -m pip install -r studio-dev/listing-workbench/cloud_requirements.txt
 Push-Location studio-dev/listing-workbench/visual-ui
@@ -44,7 +48,7 @@ $env:NUMBA_CACHE_DIR = Join-Path $env:LOCALAPPDATA 'JFRun/numba'
 .venv/Scripts/python -B -X utf8 studio-dev/listing-workbench/desktop_launcher.py
 ```
 
-已有本地 `config.json` 时保留原文件，勿覆盖。工作台地址为 `http://127.0.0.1:18769`；源代码默认端口仍为 18765，可通过环境变量选择独立端口。模型设置使用本机自己的 Codex Tools，常用代理地址 `http://127.0.0.1:8787/v1`。新机器自行登录和配置预算、店铺及浏览器绑定。
+已有本地 `config.json` 时保留原文件。源码和笔记本试跑默认使用 `http://127.0.0.1:18769`，独立便携版默认使用 `18768`。可用 `JUNFEI_PORT` 指定工作台端口。只读诊断用 `python -B studio-dev/listing-workbench/runtime_environment.py --json`，检查项目配置、端口、EGO 绑定和图片资源文件。模型设置使用本机自己的 Codex Tools，常用代理地址 `http://127.0.0.1:8787/v1`。新机器自行登录和配置预算、店铺及浏览器绑定。
 
 ## 完整作图资源与笔记本试跑
 
@@ -60,7 +64,21 @@ $env:NUMBA_CACHE_DIR = Join-Path $env:LOCALAPPDATA 'JFRun/numba'
 
 Codex 聊天负责持续编排，任务中心保存配置和状态，原生模块保存任务、输入与回执。新图片候选到正式图库/SKU 的通用自动交接尚未统一；工作台本身不是完整无人值守的多店轮转执行器。原正式图库、SKU、身份、预算与发布检查继续执行。示例关闭生图和自动发布，循环模板关闭。
 
+### Agent 接续和正式交付
+
+从商品页的“运营状态与 Codex”配对并派单。复制本款接续信息可带上原任务、正式图库确认回执和 ERP 外部编号，配对码单独生成。每个会话使用独立配对码领取核对任务，运营员可以撤销本款配对码。使用 `studio-dev/automation/codex_workbench.py` 的 `next`、`review`、`status` 和 `receipt`。连接其他端口时按接续信息设置 `JUNFEI_CODEX_URL`。母版使用远程原图时，先在图片引擎中关联母版颜色，把已核对的原图保存在本机。首色七图派单经运营员确认后进入原生图片引擎，原请求可查询任务与质检回执。
+
+核对时间较长时，领取方可通过 `heartbeat <原派单编号>` 延长三分钟核对租约。原配对码和派单的有效期继续适用。
+
+新版服装套图可在商品交付页选择过检的逐色套图，也可使用沿所选母版生成的六个过检颜色图位。所有颜色沿用母版第七张真实尺码图。系统重新校验实际颜色、子 SKU、图序、文件哈希和尺寸数据，并记录图库版本。ERP 草稿保存和正式发布分别确认。
+
+正式发布可仅选美国，或者在本机已启用跨站策略并核对英国设置后接续英国。正式发布和写入类恢复需预检当前快照并重新输入工作台密码。新建的单机工作空间会先要求运营员设置发布确认密码。只读观察沿原工作台任务及 ERP ID 回查。CLI 在售核验读取原工作台回执，核对完整子 SKU 和 ASIN。
+
+任务中心的“轮转检查点”保存当前轮次、目标和商品，按已核对的原生发布回执计数。运营员可淘汰尚未发起刊登、且无待核对提交的当前商品，继续本店的同一位置。归档后可用已保存配置开始新轮转，原回执和排重历史继续可查。每次外部发布仍走商品交付页。
+
 ## 验证与维护
+
+退出工作台并结束业务任务后，可用 `python -B studio-dev/listing-workbench/workspace_backup.py create <数据目录> <新快照目录>` 创建本机数据快照。用同一工具的 `verify <快照目录>` 检查文件哈希和 SQLite 内容。快照含本机业务数据，应保存在受保护的存储中。独立数据目录、EGO 登录资料和系统凭据使用各自的迁移流程。
 
 源码迁移前，便携版已完成本机离线安装、固定模型代码/本机库/权重哈希、279 项模板资源与隔离 HTTP 启动检查。此次源码快照另通过 9 项颜色来源测试和 12 项店铺配置测试。这些记录不代表笔记本实际 GPU、付费出图或 ERP 刊登已验收。
 

@@ -15,29 +15,35 @@ import app_paths
 import codex_handoff
 import discovery_intake
 import erp_collection
+import image_engine
+import image_engine_delivery
 import image_provider
 import listing_jobs
 import provider
 import publication_flow
-import studio_bridge
 import visual_studio
 
 VERSION = 1
 TTL = 1800
+REVIEW_LEASE = 180
 REQUEST_ID = re.compile(r'[a-zA-Z0-9_-]{8,100}')
 ACTION_LABELS = {
     'research_and_copy': '接续选品研究与文案',
     'generate_copy': '生成 Listing 文案',
     'generate_image': '生成指定图位',
+    'generate_image_suite': '制作首色七图',
     'collect_draft': '采集 ERP 草稿',
     'observe_publication': '核对原发布结果',
+    'observe_image': '核对原生作图任务',
 }
 ACTION_EFFECTS = {
     'research_and_copy': ('原选品任务的研究与文案草稿','付费文本，预算仅记录',False),
     'generate_copy': ('本站 Listing 文案生成与版本合并','付费文本',False),
     'generate_image': ('指定方案的单个图位','按图像服务或订阅计量',False),
+    'generate_image_suite': ('当前商品首色七图及原生质检','按当前账号 Codex Tools 计量',False),
     'collect_draft': ('目标店铺的草稿保存与回读','ERP 草稿操作',True),
     'observe_publication': ('读取原美国及英国发布任务的回执','只读观察',False),
+    'observe_image': ('读取本款原生图片任务及质检结果','只读观察',False),
 }
 
 
@@ -51,8 +57,10 @@ PROPOSAL_FIELDS = {
     'research_and_copy': {'budgetCny', 'researchAsins'},
     'generate_copy': set(),
     'generate_image': set(),
+    'generate_image_suite': {'brief'},
     'collect_draft': set(),
     'observe_publication': set(),
+    'observe_image': set(),
 }
 
 
@@ -100,12 +108,12 @@ def selection_required(owner, product, market, tasks=None):
 def _project_actions(product, market):
     product_market = product.get('market') or (product.get('sourceImport') or {}).get('market') or 'US'
     if market != product_market:
-        return None, []
+        return None
     visual = visual_studio.list_projects(product['id'])
     projects = [p for p in visual['projects'] if p.get('market', market) == market
                 and p.get('deliverable', 'gallery') == 'gallery']
     if not projects:
-        return None, []
+        return None
     project = projects[0]
     runs = {}
     for run in visual['runs']:
@@ -116,13 +124,42 @@ def _project_actions(product, market):
         run = runs.get(index, {})
         slots.append({'slot': index, 'label': visual_studio.slot_name(project, index),
                       'runId': run.get('id'), 'status': run.get('status')})
-    settings = image_provider.public()
-    model = next(iter(settings['models']), None)
-    return {'id': project['id'], 'confirmed': project.get('confirmed') is True, 'slots': slots}, [
-        {'projectId': project['id'], 'slot': slot['slot'], 'label': slot['label'],
-         'model': model, 'provider': settings['activeProvider'],
-         'projectDigest': listing_jobs.digest(project)} for slot in slots
-        if model and slot['runId'] is None]
+    return {'id': project['id'], 'confirmed': project.get('confirmed') is True, 'slots': slots}
+
+
+def formal_suite_target(product, market):
+    import garment_auto
+    import image_source_variants
+    import official_image_templates as templates
+    import shared_size_chart
+    from lifestyle_variety import choose_template_ids
+
+    if (market != (product.get('market') or (product.get('sourceImport') or {}).get('market') or 'US')
+            or garment_auto.category(product) == 'auto'):
+        return None
+    groups, master = image_engine_delivery.scope(product)
+    settings = image_engine.require_codex()
+    chart = shared_size_chart.from_product(product)
+    for row in groups[master]['references']:
+        reference = row['url']
+        source_sha = image_source_variants.reviewed_reference_sha(product, master, reference)
+        if source_sha:
+            break
+    else:
+        raise ValueError('请在图片引擎中关联母版颜色原图，再派发七图任务')
+    detail_ids = templates.choose_ids(product, 2)
+    if len(set(detail_ids)) != 2:
+        raise ValueError('缺少两个可用的原细节模板')
+    lifestyle_ids = choose_template_ids(templates, 3, excluded=detail_ids)
+    evidence = []
+    for template_id in (*detail_ids, *lifestyle_ids):
+        row = templates.get(template_id)
+        evidence.append({'id': template_id, 'sha256': row['asset']['sha256'],
+                         'promptSha256': row['promptSha256'][0]})
+    return {'colorKey': master, 'label': groups[master]['color'], 'reference': reference, 'sourceSha256': source_sha,
+            'provider': 'Codex Tools', 'model': settings['model'], 'canvas': settings.get('outputSize') or '1600x1600',
+            'sizeChartDigest': listing_jobs.digest(chart), 'templates': evidence,
+            'productDigest': listing_jobs.digest(product)}
 
 
 def status(owner, database, product_id, market):
@@ -166,10 +203,22 @@ def status(owner, database, product_id, market):
                 allow('generate_copy')
         else:
             blockers.append('请补齐本款已核验的商品资料')
-    visual, image_targets = _project_actions(p, market)
+    visual = _project_actions(p, market)
+    engine_tasks = image_engine.coordination_tasks(product_id)
+    if visual and not cli_task and not engine_tasks:
+        blockers.append('仅发现历史分镜项目，Codex 不派发旧图片入口；请从当前图片引擎继续本款')
     if not cli_task:
-        for target in image_targets:
-            allow('generate_image', **target)
+        for task in engine_tasks:
+            allow('observe_image', taskId=task['id'])
+        if not any(t['status'] not in ('failed', 'needs_revision', 'completed') for t in engine_tasks):
+            try:
+                suite = formal_suite_target(p, market)
+                if suite and not any(t['status'] == 'completed' and t.get('request', {}).get('mode') == 'suite'
+                                     and (t['request'].get('sourceVariant') or {}).get('colorKey') == suite['colorKey']
+                                     and t['request'].get('count') == 7 for t in engine_tasks):
+                    allow('generate_image_suite', **suite)
+            except (ValueError, OSError) as error:
+                blockers.append(str(error))
     erp = erp_collection.view(owner, workspace, product_id)
     destinations = [d for d in erp['destinations'] if d.get('marketplace') == market]
     erp_jobs = [j for j in erp['jobs'] if j.get('marketplace') == market]
@@ -192,7 +241,10 @@ def status(owner, database, product_id, market):
             packets[destination_id]=packet
             allow('collect_draft',destinationId=destination_id,store=destination['store'],
                   destinationDigest=listing_jobs.digest(target),reviewDigest=erp_collection.review_digest(packet))
-    published = publication_flow.list_jobs(owner, product_id) if market in ('US', 'UK') else []
+    published = []
+    if market in ('US', 'UK'):
+        published = [job for job in publication_flow.list_jobs(owner, product_id)
+                     if market in job.get('markets', ['US', 'UK'])]
     for job in published:
         if not cli_task and job.get('canObserveLatestReceipts'):
             allow('observe_publication', jobId=job['id'])
@@ -200,10 +252,11 @@ def status(owner, database, product_id, market):
     reference = (p.get('selectionResearch') or {}).get('reference') or {}
     supplier = (p.get('sourceImport') or {}).get('supplier') or {}
     variants = erp_collection.eligible_variant_rows(p)
-    stage = ('发布与在售核对' if published else 'ERP 草稿' if erp_jobs else '视觉套图' if visual
+    stage = ('发布与在售核对' if published else 'ERP 草稿' if erp_jobs else '视觉套图' if visual or engine_tasks
              else 'Listing 文案' if copy.get('title') else '选品、货源与研究')
-    return {
+    snapshot = {
         'version': VERSION, 'accountId': owner, 'productId': product_id, 'market': market, 'revision': revision, 'stage': stage,
+        'productDigest': listing_jobs.digest(p),
         'product': {'name': p['name'], 'parentSku': p.get('sku'),
                     'variants': [{'sku': sku, 'color': color, 'size': size, 'sourceAsin': asin,'source':source,'mappingStatus':mapping}
                                  for sku, color, english, size, source, mapping, asin in variants]},
@@ -219,6 +272,14 @@ def status(owner, database, product_id, market):
         'copy': {'digest': listing_jobs.digest(copy), 'fields': {key: copy.get(key) for key in listing_jobs.FIELDS},
                  'job': (p.get('listingGeneration') or {}).get(market)},
         'visual': visual,
+        'imageEngine': {'tasks': [{'id': task['id'], 'status': task['status'],
+                                   'mode': task['request'].get('mode'), 'updated': task.get('updated'),
+                                   'resultCount': len(task.get('results') or []),
+                                   'reviews': [{'index': row.get('index'),
+                                                'blocking': row.get('review', {}).get('blocking'),
+                                                'identityPreserved': row.get('review', {}).get('identityPreserved')}
+                                               for row in task.get('results') or []]}
+                                  for task in engine_tasks]},
         'draftPackets':packets,
         'amounts':amounts(p,market,tasks),
         'erp': {'destinations': destinations, 'jobs': [
@@ -231,6 +292,43 @@ def status(owner, database, product_id, market):
                         for j in published],
         'blockers': list(dict.fromkeys(blockers)), 'actions': actions,
     }
+    gallery = image_engine_delivery.selection(product_id)
+    snapshot['checkpoints'] = checkpoints(snapshot, gallery, published)
+    return snapshot
+
+
+def checkpoints(snapshot, gallery, publications):
+    """Reference the persisted records without inferring downstream completion."""
+    rows = []
+
+    def add(kind, record, id_field='id', **details):
+        rows.append({'kind': kind, 'id': record.get(id_field), 'status': record.get('status'),
+                     **{key: value for key, value in details.items() if value is not None}})
+
+    selection = snapshot['selection']
+    if selection['cliTask']:
+        task = selection['cliTask']
+        add('selectionCli', task, stage=task['stage'], market=task['marketplace'])
+    for task in selection['tasks']:
+        add('selection', task)
+    copy = snapshot['copy']['job']
+    if copy:
+        add('copy', copy, 'jobId')
+    for task in snapshot['imageEngine']['tasks']:
+        add('image', task)
+    if gallery and gallery.get('accountId') == snapshot['accountId']:
+        rows.append({'kind': 'gallery', 'id': gallery.get('versionId'), 'status': 'approval_recorded',
+                     'approvedAt': gallery.get('approvedAt')})
+    for job in snapshot['erp']['jobs']:
+        add('draft', job, stage=job['phase'], externalId=job['draftId'])
+
+    market = snapshot['market']
+    for job in publications:
+        observation = job.get(market.lower() + 'PublicationObservation') or {}
+        add('publication', job, stage=job.get('phase'), market=market,
+            externalId=job.get(market.lower() + 'PublishId'), observation=observation.get('status'),
+            observationVerified=observation.get('verification'))
+    return rows
 
 
 def amounts(product,market,tasks):
@@ -260,12 +358,30 @@ def read_proposal(db, key):
     return proposal_view(row[0])
 
 
+def public_proposal(item):
+    claim = item.get('reviewClaim') or {}
+    public = {key: value for key, value in item.items() if key != 'reviewClaim'}
+    if item['status'] == 'assigned' and claim.get('until', 0) > time.time():
+        public['reviewInProgress'] = True
+    return public
+
+
 def reconcile(proposal,key):
     if proposal['status'] not in ('dispatching','needs_review'):
         return proposal
     kind=proposal['request']['type']
+    if kind == 'observe_image':
+        try:
+            task = image_engine.get(proposal['request']['target']['taskId'])
+        except ValueError:
+            return {**proposal, 'message':'原生图片任务暂不可读取，请核对原任务编号'}
+        if task.get('productId') != key[1]:
+            return {**proposal, 'message':'原生图片任务与本款商品不匹配，请核对原任务编号'}
+        return {**proposal, 'status':'dispatched', 'jobId':task['id'], 'jobStatus':task['status'],
+                'message':'已关联原生图片任务，质量以原生质检结果和运营员确认记录为准'}
     ledgers={'research_and_copy':lambda:closing(agent_center.connect()),'generate_copy':listing_jobs.database,
              'generate_image':lambda:closing(visual_studio.db()),'collect_draft':erp_collection.connect,
+             'generate_image_suite':lambda:closing(image_engine.db()),
              'observe_publication':publication_flow.connect}
     with ledgers[kind]() as db:
         found=codex_handoff.lookup(db,key)
@@ -279,7 +395,7 @@ def reconcile(proposal,key):
 def receipt(owner, product, market, request_id):
     with connect() as db:
         key=(owner, product, market, request_id)
-        return reconcile(read_proposal(db,key),key)
+        return public_proposal(reconcile(read_proposal(db,key),key))
 
 
 def decline(owner, product, market, request_id):
@@ -288,11 +404,25 @@ def decline(owner, product, market, request_id):
         db.execute('BEGIN IMMEDIATE')
         proposal = read_proposal(db, key)
         if proposal['status'] not in ('assigned', 'pending'):
-            return proposal
+            return public_proposal(proposal)
         proposal.update(status='declined', declinedAt=time.time(), declinedBy=owner)
+        proposal.pop('reviewClaim', None)
         db.execute('UPDATE proposals SET body=? WHERE account=? AND product=? AND market=? AND id=?',
                    (json.dumps(proposal, ensure_ascii=False), *key))
         return proposal
+
+
+def unresolved_submission(account, product):
+    with connect() as db:
+        rows = db.execute("""SELECT market,id,body FROM proposals WHERE account=? AND product=?
+            AND json_extract(body,'$.status') IN ('dispatching','needs_review')
+            AND json_extract(body,'$.request.type') NOT IN ('observe_image','observe_publication')""",
+                          (account, product))
+        for market, request_id, body in rows:
+            item = reconcile(json.loads(body), (account, product, market, request_id))
+            if item['status'] != 'dispatched':
+                return request_id
+    return None
 
 
 def list_proposals(account, product, market):
@@ -305,22 +435,26 @@ def list_proposals(account, product, market):
           OR (json_extract(body,'$.status') IN ('pending','assigned') AND json_extract(body,'$.expiresAt')>?)
         ORDER BY sequence DESC""", (account, product, market, time.time()))
         proposals=[proposal_view(row[0]) for row in rows]
-        return [reconcile(p,(account,product,market,p['request']['requestId'])) for p in proposals]
+        return [public_proposal(reconcile(p,(account,product,market,p['request']['requestId']))) for p in proposals]
 
 
 REVIEW_STEPS = {
     'research_and_copy': '核对原选品任务编号、候选 ASIN、货源资料及运营员指定的竞品与预算。',
     'generate_copy': '核对当前站点、商品资料与现有文案，指出缺少依据或相互矛盾的商品描述。',
     'generate_image': '核对当前方案、图位用途、已保存的生成记录及指定模型。',
+    'generate_image_suite': '核对母版颜色、真实参考图、尺寸依据、五个原模板与制作要求。',
     'collect_draft': '核对目的店铺、父子 SKU、当前站点文案、图位及原 ERP 草稿回执。',
     'observe_publication': '核对原发布任务编号、关联店铺和已有回执，区分已受理与已在售。',
+    'observe_image': '核对原图片任务编号、真实来源、每张图的原生质检状态及失败原因。',
 }
 REVIEW_INPUTS = {
     'research_and_copy': ('selection', 'supplier'),
     'generate_copy': ('product', 'supplier', 'copy'),
     'generate_image': ('product', 'visual'),
+    'generate_image_suite': ('product', 'supplier'),
     'collect_draft': ('product', 'copy', 'visual', 'erp'),
     'observe_publication': ('publication',),
+    'observe_image': ('imageEngine',),
 }
 
 
@@ -332,7 +466,21 @@ def review_inputs(snapshot,data):
                 'receipts':[j for j in snapshot['erp']['jobs'] if j['destinationId']==target['destinationId']]}
     elif kind=='observe_publication':
         inputs={'publication':[j for j in snapshot['publication'] if j['id']==target['jobId']]}
+    elif kind=='observe_image':
+        inputs={'imageTask': next((task for task in snapshot['imageEngine']['tasks']
+                                  if task['id']==target['taskId']), None)}
     return {**inputs,'target':target,'parameters':data['parameters'],'market':snapshot['market']}
+
+
+def same_review_inputs(snapshot, proposal):
+    request = proposal['request']
+    if not any(action['type'] == request['type'] and action['target'] == request['target']
+               for action in snapshot['actions']):
+        return False
+    product_digest = proposal.get('productDigest')
+    same_product = (product_digest == snapshot['productDigest'] if product_digest
+                    else snapshot['revision'] == request['revision'])
+    return same_product and review_inputs(snapshot, request) == proposal['assignment']['inputs']
 
 
 def checklist(inputs):
@@ -370,7 +518,8 @@ def validate_evidence(assignment,refs,decision):
 def check_unresolved_handoff(db,owner,product,market,request):
     kind=request['type']
     fields={'research_and_copy':('taskId',),'generate_copy':(),'generate_image':('projectId','slot'),
-            'collect_draft':('destinationId',),'observe_publication':('jobId',)}[kind]
+            'collect_draft':('destinationId',),'observe_publication':('jobId',),
+            'observe_image':('taskId',), 'generate_image_suite':('colorKey',)}[kind]
     rows=db.execute("""SELECT market,id,body FROM proposals WHERE account=? AND product=?
         AND json_extract(body,'$.request.type')=?
         AND json_extract(body,'$.status') IN ('dispatching','needs_review')""",(owner,product,kind))
@@ -397,6 +546,9 @@ def assign(owner, database, product, market, data):
         raise ValueError('操作请求参数无效')
     if kind == 'research_and_copy':
         agent_handoff.copy_parameters(parameters)
+    if kind == 'generate_image_suite' and (not isinstance(parameters['brief'], str)
+            or not 1 <= len(parameters['brief'].strip()) <= 6000):
+        raise ValueError('请填写首色七图的制作要求')
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         snapshot = status(owner, database, product, market)
@@ -405,17 +557,18 @@ def assign(owner, database, product, market, data):
             raise ValueError('操作或资料版本已变化，请重新读取商品状态')
         check_unresolved_handoff(db,owner,product,market,data)
         inputs = review_inputs(snapshot,data)
-        fingerprint = listing_jobs.digest([2,data, inputs])
+        fingerprint = listing_jobs.digest([2, snapshot['productDigest'], inputs])
         rows = db.execute("""SELECT body FROM proposals WHERE account=? AND product=? AND market=?
             AND json_extract(body,'$.fingerprint')=? AND json_extract(body,'$.expiresAt')>? AND json_extract(body,'$.assignment.version')=2
             AND json_extract(body,'$.status') IN ('assigned','pending')""",
                           (owner, product, market, fingerprint, time.time()))
         existing = rows.fetchone()
         if existing:
-            return proposal_view(existing[0])
+            return public_proposal(proposal_view(existing[0]))
         request_id = uuid.uuid4().hex
         proposal = {'request': {**data, 'requestId': request_id}, 'status': 'assigned', 'label': ACTION_LABELS[kind],
                     'fingerprint': fingerprint,
+                    'productDigest': snapshot['productDigest'],
                     'authority':authority(kind),
                     'assignment': {'version':2,'checks':checklist(inputs),'accountId': owner, 'productId': product, 'market': market,
                                    'goal': '核对后端指定动作的输入并交回核对意见',
@@ -429,16 +582,45 @@ def assign(owner, database, product, market, data):
         return proposal
 
 
-def next_assignment(owner, product, market):
+def next_assignment(owner, product, market, reviewer=None):
     with connect() as db:
-        row = db.execute("""SELECT body FROM proposals WHERE account=? AND product=? AND market=?
+        db.execute('BEGIN IMMEDIATE')
+        now = time.time()
+        row = db.execute("""SELECT id, body FROM proposals WHERE account=? AND product=? AND market=?
             AND json_extract(body,'$.status')='assigned' AND json_extract(body,'$.assignment.version')=2
             AND json_extract(body,'$.expiresAt')>?
-            ORDER BY rowid LIMIT 1""", (owner, product, market, time.time())).fetchone()
-        return {'assignment': json.loads(row[0]) if row else None}
+            AND (COALESCE(json_extract(body,'$.reviewClaim.until'),0)<=?
+                 OR json_extract(body,'$.reviewClaim.owner')=?)
+            ORDER BY rowid LIMIT 1""", (owner, product, market, now, now, reviewer)).fetchone()
+        if row is None:
+            return {'assignment': None}
+        item = json.loads(row[1])
+        if reviewer:
+            item['reviewClaim'] = {'owner': reviewer, 'until': now + REVIEW_LEASE}
+            db.execute('UPDATE proposals SET body=? WHERE account=? AND product=? AND market=? AND id=?',
+                       (json.dumps(item, ensure_ascii=False), owner, product, market, row[0]))
+        item.pop('reviewClaim', None)
+        return {'assignment': item}
 
 
-def submit_review(owner, database, product, market, data):
+def renew_review(owner, product, market, request_id, reviewer):
+    if not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
+        raise ValueError('请提供原派单编号')
+    key = (owner, product, market, request_id)
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        item = read_proposal(db, key)
+        claim = item.get('reviewClaim') or {}
+        now = time.time()
+        if item['status'] != 'assigned' or claim.get('owner') != reviewer or claim.get('until', 0) <= now:
+            raise ValueError('当前会话没有有效的核对租约，请查阅原派单状态')
+        claim['until'] = min(now + REVIEW_LEASE, item['expiresAt'])
+        db.execute('UPDATE proposals SET body=? WHERE account=? AND product=? AND market=? AND id=?',
+                   (json.dumps(item, ensure_ascii=False), *key))
+        return {'requestId': request_id, 'reviewUntil': claim['until']}
+
+
+def submit_review(owner, database, product, market, data, *, reviewer=None):
     if not isinstance(data, dict) or set(data) != {'requestId', 'decision', 'note', 'evidence'}:
         raise ValueError('仅接受派单编号、核对结论、说明及证据引用')
     request_id, note, refs = data['requestId'], data['note'], data['evidence']
@@ -451,20 +633,21 @@ def submit_review(owner, database, product, market, data):
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         item = read_proposal(db, key)
+        claim = item.get('reviewClaim') or {}
+        if reviewer and claim.get('until', 0) > time.time() and claim['owner'] != reviewer:
+            raise ValueError('该派单由另一会话核对中，请等待原会话提交或领取窗口结束')
         if item.get('review') == data:
-            return item
+            return public_proposal(item)
         if item['status'] != 'assigned':
             raise ValueError('仅当前有效派单可交回一次核对结果')
         assignment = item['assignment']
         validate_evidence(assignment,refs,data['decision'])
         snapshot = status(owner, database, product, market)
-        request = item['request']
-        if (snapshot['revision'] != request['revision']
-                or not any(a['type']==request['type'] and a['target']==request['target'] for a in snapshot['actions'])
-                or review_inputs(snapshot,request)!=assignment['inputs']):
+        if not same_review_inputs(snapshot, item):
             item.update(status='stale', message='派单资料或允许动作已变化，请由工作台重新派单')
         else:
             item.update(review=data, reviewedAt=time.time(), status='pending' if data['decision']=='ready' else 'blocked')
+        item.pop('reviewClaim', None)
         db.execute('UPDATE proposals SET body=? WHERE account=? AND product=? AND market=? AND id=?',
                    (json.dumps(item, ensure_ascii=False), *key))
         return item
@@ -515,21 +698,20 @@ def approve_locked(owner, database, product, market, request_id):
         db.execute('BEGIN IMMEDIATE')
         proposal = read_proposal(db, key)
         if proposal['status'] != 'pending':
-            return reconcile(proposal,key)
+            return public_proposal(reconcile(proposal,key))
         data = proposal['request']
         check_unresolved_handoff(db,owner,product,market,data)
         snapshot = status(owner, database, product, market)
-        if snapshot['revision'] != data['revision'] or not any(
-                a['type'] == data['type'] and a['target'] == data['target'] for a in snapshot['actions']):
+        if not same_review_inputs(snapshot, proposal):
             raise ValueError('商品资料或任务已变化，请重新提交操作请求')
-        if review_inputs(snapshot,data)!=proposal['assignment']['inputs'] or proposal['authority']!=authority(data['type']):
+        if proposal['authority']!=authority(data['type']):
             raise ValueError('核对资料或授权范围已变化，请重新派单')
         # Persist intent before dispatch. A lost response cannot cause another dispatch.
         proposal.update(status='dispatching', approvedAt=time.time(), approvedBy=owner)
         db.execute('UPDATE proposals SET body=? WHERE account=? AND product=? AND market=? AND id=?',
                    (json.dumps(proposal, ensure_ascii=False), *key))
     try:
-        result = dispatch(owner, database, product, market, data)
+        result = dispatch(owner, database, product, market, {**data, 'revision': snapshot['revision']})
     except Exception:
         # An external service may already have accepted the request.
         proposal.update(status='needs_review', message='须核对本款原任务及外部回执')
@@ -555,16 +737,36 @@ def dispatch(owner, database, product, market, data):
                                          'expectedRevision': data['revision'], 'requestId': data['requestId']},handoff=handoff)
     if kind == 'observe_publication':
         return publication_flow.observe(owner, target['jobId'],handoff=handoff)
+    if kind == 'observe_image':
+        task = image_engine.get(target['taskId'])
+        if task.get('productId') != product:
+            raise ValueError('原生图片任务不属于当前商品')
+        observed = image_engine.poll(task['id'])
+        return {'id': observed['id'], 'status': observed['status']}
     revision, workspace = read_workspace(database)
     if revision != data['revision']:
         raise ValueError('资料已更新，请核对原请求')
-    if kind == 'generate_image':
+    if kind == 'generate_image_suite':
+        import image_source_variants
+        from image_engine_delivery import ROLES
+
         p = validate_scope(workspace, product, market)
-        copy = workspace.get('copy', {}).get(product + '-' + market, {})
-        return studio_bridge.render(
-            {'projectId': target['projectId'], 'indices': [target['slot']], 'confirmed': True,
-             'config': {'model': target['model'], 'size': '1:1', 'resolution': '2K'}},
-            p, copy, codex_target=target,handoff=handoff)
+        if formal_suite_target(p, market) != target:
+            raise ValueError('商品来源、模板或当前模型已变化，请重新派单')
+        source = image_source_variants.prepare(p, {'productId': product, 'colorKey': target['colorKey'],
+                                                   'reference': target['reference']})
+        if source['source']['sha256'] != target['sourceSha256']:
+            raise ValueError('已核对的颜色原图内容发生变化，请重新派单')
+        template_ids = [row['id'] for row in target['templates']]
+        return image_engine.start({
+            'requestId': data['requestId'], 'mode': 'suite', 'count': len(ROLES),
+            'references': [source['source']['url']], 'sourceVariant': {'receiptId': source['association']['receiptId']},
+            'brief': data['parameters']['brief'], 'noText': False,
+            'apparelSuite': {'counts': {role: ROLES.count(role) for role in (*dict.fromkeys(ROLES), 'model')},
+                             'shotOrder': list(ROLES), 'artDirection': 'template-led-v1',
+                             'pointTemplateIds': template_ids[:2], 'useLifestyleTemplates': True,
+                             'lifestyleTemplateIds': template_ids[2:], 'sizeChartStyle': 'editorial-split-v1'},
+        }, p, handoff=handoff)
     if kind == 'collect_draft':
         destination = next((d for d in erp_collection.destinations(owner) if d['id'] == target['destinationId']), None)
         if listing_jobs.digest(destination) != target['destinationDigest']:

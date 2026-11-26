@@ -43,7 +43,7 @@ function showHomeData(node, data) {
         <td>${task.at===null?'未记录':homeTime.format(task.at * 1000)}</td></tr>`;
     }).join('')}</tbody></table></div>` : '<p class="ds-feedback ds-muted">暂无任务记录。</p>';
   node.innerHTML = `<div><dl class="ds-panel workbench-metrics">${metrics}</dl>
-    <p class="ds-muted ds-note">${esc(data.date)} · 北京时间。选品按站点和 ASIN 去重。生成中按已记账的任务统计。</p></div>
+    <div class="ds-muted ds-note wb-title-label"><span><time datetime="${esc(data.date)}">${esc(data.date)}</time> · 北京时间</span>${workbenchHelp('选品按站点和 ASIN 去重。生成中按已记账的任务统计。','首页统计')}</div></div>
     <section class="ds-panel" aria-labelledby="homeRecent"><div class="ds-panel-heading"><h2 id="homeRecent">最近任务</h2>
       <a class="ds-button" href="/tasks" data-home-link="agent">查看任务</a></div>${table}</section>`;
   node.querySelectorAll('[data-home-link]').forEach(link => link.onclick = event => workbenchLink(event, link.dataset.homeLink));
@@ -52,7 +52,7 @@ function showHomeData(node, data) {
 window.renderWorkbenchHome = function () {
   const content = document.getElementById('content');
   content.innerHTML = `<section class="ds workbench-home" aria-labelledby="workbenchTitle">
-    <header class="ds-header"><div><h1 id="workbenchTitle">工作台</h1><p class="ds-muted">查看产品生产进度、积压和最近任务</p></div>
+    <header class="ds-header"><div><h1 id="workbenchTitle">工作台</h1></div>
       <div class="ds-actions"><a class="ds-button ds-button-primary" href="/products" data-home-link="products">查看产品档案</a></div></header>
     <div class="workbench-home" data-home-content></div></section>`;
   content.querySelectorAll('[data-home-link]').forEach(link => link.onclick = event => workbenchLink(event, link.dataset.homeLink));

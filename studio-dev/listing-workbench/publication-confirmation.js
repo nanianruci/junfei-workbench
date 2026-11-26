@@ -7,23 +7,25 @@ window.confirmPublicationOperation = async function(accountId, action, request) 
   if(!response.ok)throw Error(result.error||'发布请求失败');
   return result;
  }
- const {preview}=await post('preview',{action,request});
+ const {preview,needsLocalConfirmationPassword}=await post('preview',{action,request});
  const dialog=document.createElement('dialog');
  const form=document.createElement('form');
  form.method='dialog';
  form.className='ds-panel ds-feedback';
  const title=document.createElement('h2');
- title.textContent=action==='start'?'确认美国发布并接续英国':'确认继续原发布任务';
+ title.textContent=action==='start'?(preview.markets?.length===1?'确认发布美国':'确认美国发布并接续英国'):'确认继续原发布任务';
  const summary=document.createElement('p');
- summary.textContent=[preview.productName||preview.productId,preview.sourceStore+' → '+preview.targetStore,
+ summary.textContent=[preview.productName||preview.productId,[preview.sourceStore,preview.targetStore].filter(Boolean).join(' → '),
   preview.parentSku,preview.variantCount+' 个子 SKU',preview.draftId&&'草稿 '+preview.draftId,
   preview.id&&'原任务 '+preview.id,preview.phase].filter(Boolean).join(' · ');
  const label=document.createElement('label');
  label.className='field';
- label.textContent='当前工作台账号密码';
+ label.textContent=needsLocalConfirmationPassword?'首次设置本机发布确认密码（12–128 位）':'当前工作台账号密码';
  const input=document.createElement('input');
  input.type='password';
- input.autocomplete='current-password';
+ input.autocomplete=needsLocalConfirmationPassword?'new-password':'current-password';
+ input.minLength=12;
+ input.maxLength=128;
  input.required=true;
  label.append(input);
  const actions=document.createElement('div');
@@ -45,5 +47,10 @@ window.confirmPublicationOperation = async function(accountId, action, request) 
   dialog.onclose=()=>{resolve(dialog.returnValue==='approved'?input.value:null);input.value='';dialog.remove();};
   dialog.showModal();
  });
- return password===null?null:post(action,{...request,confirmationDigest:preview.digest,operatorPassword:password});
+ if(password===null)return null;
+ if(needsLocalConfirmationPassword){
+  await post('setup-confirmation',{password});
+  return window.confirmPublicationOperation(accountId,action,request);
+ }
+ return post(action,{...request,confirmationDigest:preview.digest,operatorPassword:password});
 };

@@ -10,7 +10,8 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from materials import inspect_folder
-from ego_link import ego_connection_command, ego_draft_command, require_legacy_browser, parse_connection_result
+from contextlib import nullcontext
+from ego_link import browser_config, ego_connection_command, ego_draft_command, ego_space, require_legacy_browser, parse_connection_result
 
 ROOT = Path(__file__).resolve().parent
 
@@ -101,7 +102,8 @@ class Publisher(tk.Tk):
 
     def connect_brain(self):
         try:
-            self.start(ego_connection_command())
+            config = browser_config()
+            self.start(ego_connection_command(config=config), space_id=config['task_space_id'])
         except Exception as error:
             messagebox.showerror('ego连接未完成', str(error))
 
@@ -153,12 +155,13 @@ class Publisher(tk.Tk):
                 raise ValueError('请求必须包含列表核对用的店铺与ERP SKU')
             if not isinstance(patch, dict) or not patch:
                 raise ValueError('请求必须至少包含一个明确修改字段')
-            command = ego_draft_command(name)
+            config = browser_config()
+            command = ego_draft_command(name, config=config)
             summary = json.dumps(patch, ensure_ascii=False)
             if not messagebox.askyesno('确认修改已有草稿',
                     f'在ego专属工作区修改此钧飞草稿并保存。\n\n草稿ID：{request["draftId"]}\n店铺：{store}\nERP SKU：{sku}\n修改字段：{summary}\n\n继续执行并重开核对？'):
                 return
-            self.start(command)
+            self.start(command, space_id=config['task_space_id'])
             self.status.set('ego核对草稿身份、保存指定字段并重开验证中')
         except Exception as error:
             messagebox.showerror('无法执行草稿修改', str(error))
@@ -198,7 +201,7 @@ class Publisher(tk.Tk):
                 command += ['--publish']
         self.start(command)
 
-    def start(self, command):
+    def start(self, command, *, space_id=None):
         if self.busy:
             return
         self.busy = True
@@ -208,14 +211,15 @@ class Publisher(tk.Tk):
         def work():
             try:
                 env = dict(os.environ, FORCE_COLOR='0')
-                self.process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', env=env, creationflags=subprocess.CREATE_NO_WINDOW)
-                # 登录提示无换行，因此逐字符转发。
-                while True:
-                    char = self.process.stdout.read(1)
-                    if not char:
-                        break
-                    self.events.put(('text', char))
-                self.events.put(('done', self.process.wait()))
+                with (ego_space(space_id) if space_id is not None else nullcontext()):
+                    self.process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', env=env, creationflags=subprocess.CREATE_NO_WINDOW)
+                    # 登录提示无换行，因此逐字符转发。
+                    while True:
+                        char = self.process.stdout.read(1)
+                        if not char:
+                            break
+                        self.events.put(('text', char))
+                    self.events.put(('done', self.process.wait()))
             except Exception as error:
                 self.events.put(('text', f'\n执行失败：{error}\n'))
                 self.events.put(('done', -1))
@@ -271,9 +275,11 @@ if __name__ == '__main__':
     if '--ego-check-output' in sys.argv:
         target = Path(sys.argv[sys.argv.index('--ego-check-output') + 1])
         try:
-            result = subprocess.run(ego_connection_command(), capture_output=True,
-                                    text=True, encoding='utf-8', timeout=30,
-                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            config = browser_config()
+            with ego_space(config['task_space_id']):
+                result = subprocess.run(ego_connection_command(config=config), capture_output=True,
+                                        text=True, encoding='utf-8', timeout=30,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
             state = parse_connection_result(result)
             report = {'connected': True, 'browser': state['browser'],
                       'spaceId': state['spaceId'],

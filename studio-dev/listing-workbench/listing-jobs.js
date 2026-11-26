@@ -122,7 +122,9 @@ async function applyDurableListing(job){
 }
 function mountDurableListingProgress(){
  const p=product();if(!p)return false;
- const job=durableListingCurrent(p,market);if(!job)return false;
+ const actionSlot=document.getElementById('listingGenerationActions');
+ const job=durableListingCurrent(p,market);
+ if(!job){actionSlot?.replaceChildren();return false}
  let box=document.getElementById('listingGenerationProgress');
  if(!box){const anchor=document.querySelector('.titlebar');if(!anchor)return true;box=document.createElement('div');box.id='listingGenerationProgress';anchor.after(box)}
  const status=job.status==='applied'?'completed':job.status==='needs_review'?'uncertain':job.status==='failed'?'failed':durableListingActive.has(job.status)?'running':'completed';
@@ -139,7 +141,8 @@ function mountDurableListingProgress(){
  if(job.status==='applied'){
   const refresh=document.createElement('button');refresh.type='button';refresh.className='btn';refresh.textContent='读取最新文案';refresh.onclick=()=>void refreshDurableListingWorkspace(signedUser,job).then(ok=>{if(!ok)toast('本页有未保存修改，请先保存或备份后读取最新文案')}).catch(error=>toast(error.message));actions.append(refresh);
  }
- if(actions.childNodes.length)box.append(actions);
+ if(actionSlot)actionSlot.replaceChildren(...actions.childNodes);
+ else if(actions.childNodes.length)box.append(actions);
  return true;
 }
 async function durableGenerateCurrent(p,targetMarket,button,{batch=false}={}){

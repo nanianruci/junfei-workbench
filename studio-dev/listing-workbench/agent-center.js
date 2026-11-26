@@ -98,12 +98,11 @@ render=function(){
 };
 function renderAgentCenter(){
  const epoch=agentEpoch;
- document.getElementById('content').innerHTML='<div class="agent-center">'+title('智能体任务中心','选择店铺、站点和产品，创建检查或交付任务', '<button class="btn" id="agentRefresh">刷新任务</button>')+`
- <div class="notice">现有成品可选择正式ERP草稿交付，使用交付页相同的账号目标、原始文件和采集回执。检查及研究任务继续保留；本页不自动生图或发布。</div>
- <section class="panel box"><h2>店铺轮转任务</h2><p>填写紫鸟店铺、ERP账号及ERP内店铺名称，按顺序每店每轮3款新商品。保存后交给Codex按总工作流执行。</p><button class="btn primary" id="agentRotationSetupOpen" type="button">启动任务 · 配置店铺</button><p class="sub" id="agentRotationSetupSummary" aria-live="polite">正在读取轮转配置…</p></section>
+ document.getElementById('content').innerHTML='<div class="agent-center">'+title('智能体任务中心','现有成品可沿用产品交付页的账号目标、文件和原回执，创建 ERP 草稿交付任务。也可创建资料检查或研究任务。', '<button class="btn" id="agentRefresh">刷新任务</button>')+`
+ <section class="panel box"><div class="wb-title-label"><h2>店铺轮转任务</h2>${workbenchHelp('按所填店铺顺序，每店每轮处理 3 款新商品。保存配置后可将启动指令交给 Codex。','店铺轮转任务')}</div><div class="actions"><button class="btn primary" id="agentRotationSetupOpen" type="button">配置轮转店铺</button> <button class="btn" id="agentRotationRunOpen" type="button">打开轮转检查点</button></div><p class="sub" id="agentRotationSetupSummary" aria-live="polite">正在读取轮转配置…</p></section>
  <div class="notice" id="publicationFollowup" hidden></div>
  <section class="panel box" id="publicationTasks"></section>
- <section class="panel box"><h2>店铺与站点</h2><p class="sub">每个账号独立保存。每个任务锁定创建时的档案，后续修改不会影响旧任务。</p>
+ <section class="panel box"><div class="wb-title-label"><h2>店铺与站点</h2>${workbenchHelp('店铺档案按账号保存。任务使用创建时的档案快照。','店铺与站点')}</div>
  <form id="agentProfileForm"><div class="agent-fields">
  <label class="field">已有档案<select id="agentSavedProfile"><option value="">新建店铺档案</option></select></label>
  <label class="field">档案名称<input name="name" required maxlength="200" value="示例店铺-美国 · US" placeholder="例如 店铺A · 美国站"></label>
@@ -113,27 +112,27 @@ function renderAgentCenter(){
  <label class="field">每子变体库存<input name="quantity" type="number" value="88" min="0" max="1000000" step="1" required></label>
  <label class="field">刊登目标<select name="mode"><option value="draft">先保存草稿</option><option value="publish" disabled>正式发布请使用产品交付页入口</option></select></label>
  </div><button type="submit" class="btn">保存店铺档案</button><button type="button" class="btn primary" id="agentSaveDefaultProfile" style="margin-left:8px">一键保存默认档案</button></form></section>
- <section class="panel box"><h2>创建任务</h2><form id="agentTaskForm"><div class="agent-fields">
+ <section class="panel box"><div class="wb-title-label"><h2>创建任务</h2>${workbenchHelp('现有单款的数量填 1。启用 AI 规划、自动竞品研究或自动文案时须填预算。固定规则流程无模型费用。','创建任务')}</div><form id="agentTaskForm"><div class="agent-fields">
  <label class="field agent-field-wide">使用店铺<select name="profileId" required id="agentTaskProfile"><option value="">请先保存店铺档案</option></select></label>
- <label class="field agent-field-wide">正式ERP目标<select name="erpDestinationId" id="agentTaskErpDestination" disabled><option value="">请选择本账号正式采集目标</option></select><small>选择后直接带出店铺与站点，沿用交付页配置，不重复建档。</small></label>
+ <label class="field agent-field-wide">正式ERP目标<select name="erpDestinationId" id="agentTaskErpDestination" disabled><option value="">请选择本账号正式采集目标</option></select></label>
  <label class="field agent-field-wide">产品<select name="productId"><option value="">从选品开始（执行器待接通）</option>${state.products.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.sku||p.id)}</option>`).join('')}</select></label>
  <label class="field agent-field-wide">执行范围<select name="taskMode"><option value="erp_draft">正式ERP草稿交付：成品预检 → 采集/原回执核对</option><option value="inspect">准备检查：查缺项，不生成不发布</option><option value="production">研究与文案准备（历史流程兼容）</option></select></label>
  <label class="field">目标款数<input name="targetCount" type="number" min="1" max="30" step="1" value="1" required></label>
  <label class="field">AI 预算（人民币）<input name="budgetCny" type="number" min="0.01" step="0.01" placeholder="启用 AI 时必填"></label>
  </div><label class="field"><span>任务目标</span><textarea name="goal" required maxlength="2000" placeholder="例如：检查这款产品能否制作美国站Listing，整理缺项；合格后导出。"></textarea></label>
  <label style="display:block;margin:12px 0"><input type="checkbox" name="aiPlanning"> 使用AI拆解目标（开始执行后调用一次已配置的文本模型，会产生服务商费用）</label>
- <label style="display:block;margin:12px 0"><input type="checkbox" name="autoSourcing" checked> 自动核查1688货源（默认开启；读取已填链接，或对已采集候选前三条做只读详情检查；不采用候选、不改价格/重量）</label>
+ <div class="wb-title-label wb-field-help"><label><input type="checkbox" name="autoSourcing" checked> 自动核查 1688 货源</label>${workbenchHelp('只读检查已填链接，或核查已采集候选的前三条详情。候选采用、价格和重量需另行确认。','货源核查')}</div>
  <label style="display:block;margin:12px 0"><input type="checkbox" name="autoResearch"> 自动获取竞品正文、反查词并分析（生产任务可用；使用卖家精灵额度及付费文本模型，费用待账单核实；已有可用研究不重查）</label>
  <label class="field">竞品ASIN（可留空，先生成核验计划）<input name="researchAsins" maxlength="200" placeholder="核验后填写1–5个，例如 B0XXXXXXXX"></label>
  <label style="display:block;margin:12px 0"><input type="checkbox" name="autoListing"> 生产流程缺文案时自动生成待审核草稿（资料和关键词需齐全；含候选、编辑等多次付费文本请求，费用未知，不硬性封顶；失败不自动重试）</label>
  <label style="display:block;margin:12px 0"><input type="checkbox" name="startImmediately"> 创建后立即开始固定流程（创建成功后自动启动；仍会在每个阶段按资料、预算和证据门槛停止）</label>
- <p class="sub">选择现有单款时数量填1；从选品开始可记录批量目标。启用AI规划、自动竞品研究或自动文案必须填写预算；平台费率和多轮调用成本尚未接入，预算不是硬性封顶。默认固定规则不产生模型费用；本版不自动生图。创建任务后点击“开始”执行。</p>
  <button class="btn primary" style="margin-top:12px" type="submit">创建任务</button></form></section>
  <section class="panel box"><h2>任务列表</h2><div id="agentSummary" class="sub" aria-live="polite">正在读取任务统计…</div><button class="btn primary" id="agentStartQueued" type="button" style="margin:8px 0">启动全部待开始任务</button><button class="btn" id="agentPauseRunning" type="button" style="margin:8px 0 8px 8px">暂停全部执行中任务</button><div id="agentTasks" aria-live="polite">正在读取…</div><div id="agentCliTasks"></div></section>
  <section class="panel box" id="agentImageSection"><h2>图片与换色任务</h2><div id="agentImageTasks" aria-live="polite">正在读取…</div></section>
  <section class="panel box" id="agentDetail"><h2>执行记录</h2><p>选择一个任务查看逐步结果。</p></section>
  <details class="panel box"><summary>工具接入状态</summary><div id="agentCapabilities"></div></details></div>`;
  const style=document.createElement('style');style.textContent='#agentTasks .reviewitem{padding:16px 0}.agent-stagebar{display:flex;gap:4px;margin:14px 0 4px;overflow:auto;padding-bottom:5px}.agent-stage{display:flex;align-items:center;gap:5px;min-width:82px;color:#8290a0;font-size:11px}.agent-stage span{display:grid;place-items:center;width:22px;height:22px;border:1px solid #cbd5df;border-radius:50%;font-size:11px}.agent-stage.done{color:#22734b}.agent-stage.done span{background:#22734b;color:white;border-color:#22734b}.agent-stage.current{color:#1f5e9c;font-weight:600}.agent-stage.current span{border:2px solid #2979c8;color:#2979c8}.agent-stage small{white-space:nowrap}.agent-next{margin:8px 0;color:#5b6b7d;font-size:12px}#agentDetail pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f7f5;padding:14px;border-radius:7px;max-height:300px;overflow:auto}.agent-step{padding:12px 0;border-bottom:1px solid var(--line)}';document.getElementById('content').append(style);
+ document.getElementById('agentRotationRunOpen').onclick=()=>window.openStoreRotationRun(()=>view==='agent'&&agentEpoch===epoch);
  document.getElementById('agentRotationSetupOpen').onclick=()=>window.openStoreRotationSetup(()=>view==='agent'&&agentEpoch===epoch);
  void window.refreshStoreRotationSetup(()=>view==='agent'&&agentEpoch===epoch);
  const taskForm=document.getElementById('agentTaskForm');
@@ -202,11 +201,12 @@ async function agentRefresh(epoch){
   };
   const summary=data.summary||{};document.getElementById('agentSummary').textContent=`待开始 ${summary.queued||0} · 执行中 ${summary.running||0} · 暂停 ${summary.paused||0} · 待补齐 ${summary.blocked||0} · 需核对 ${summary.needs_review||0} · 完成 ${summary.done||0}`;
   const followup=data.publicationFollowup,followupBox=document.getElementById('publicationFollowup');
-  followupBox.hidden=!followup?.enabled;
-  if(followup?.enabled)followupBox.textContent='默认发布顺序：美国站发布中 → 复制到英国站 → 核对英国店铺、原父子SKU、GBP售价和豁免 → 英国站发布。SKU原样保留。'+(followup.executorAvailable?'请从产品交付页“发布美国并接续英国”启动；ERP草稿交付入口仍只保存草稿。':'跨站发布暂未自动启用，当前任务仍止于ERP草稿核对。');
+  const followupUnavailable=followup?.enabled&&!followup.executorAvailable;
+  followupBox.hidden=!followupUnavailable;
+  if(followupUnavailable)followupBox.textContent='跨站发布尚不可用，当前任务止于 ERP 草稿核对。';
   const cliTasks=data.cliTasks||[],cliProducts=new Set(cliTasks.map(task=>task.productId));
   const startable=data.tasks.filter(task=>task.status==='queued'&&!cliProducts.has(task.productId)).length;
-  const startQueued=document.getElementById('agentStartQueued');startQueued.disabled=!startable;startQueued.onclick=async()=>{if(!window.confirm(`确认启动全部 ${startable} 个待开始的网页任务？每个任务仍按自身门槛运行。`))return;startQueued.disabled=true;try{const result=await agentApi('start-queued',{});toast(`已启动 ${result.count} 个任务${result.errors?.length?`，${result.errors.length} 个需核对`:''}`);await agentRefresh(epoch)}catch(error){toast(error.message)}finally{startQueued.disabled=!startable}};
+  const startQueued=document.getElementById('agentStartQueued');startQueued.textContent='启动下一款待处理任务';startQueued.disabled=!startable;startQueued.onclick=async()=>{if(!window.confirm('确认启动下一款待处理的网页任务？'))return;startQueued.disabled=true;try{const result=await agentApi('start-queued',{});toast(`已启动 ${result.count} 个任务${result.errors?.length?`，${result.errors.length} 个需核对`:''}`);await agentRefresh(epoch)}catch(error){toast(error.message)}finally{startQueued.disabled=!startable}};
   const pauseRunning=document.getElementById('agentPauseRunning');pauseRunning.disabled=!summary.running;pauseRunning.onclick=async()=>{if(!window.confirm(`确认暂停全部 ${summary.running||0} 个执行中任务？当前工具完成后暂停。`))return;pauseRunning.disabled=true;try{const result=await agentApi('pause-running',{});toast(`已请求暂停 ${result.count} 个任务`);await agentRefresh(epoch)}catch(error){toast(error.message)}finally{pauseRunning.disabled=false}};
   const tasks=document.getElementById('agentTasks');tasks.innerHTML=data.tasks.length?data.tasks.map(t=>{const order=agentTaskStageOrder(t),next=order[Number(t.cursor||0)];return `<div class="reviewitem"><div><strong>${esc(t.productName)}</strong><p>${esc(t.profile.name)} · ${esc(t.profile.marketplace)} · ${esc(t.erpWorkflowVersion===2?'正式ERP草稿交付':t.taskMode==='inspect'?'准备检查':'历史生产流程')}</p>${agentStageBar(t)}<p class="agent-next">${t.reason?`当前原因：${esc(t.reason)}`:next?`下一步：${esc(agentStageLabel(next,t.results[next],t))}`:'流程记录已完成'}</p><small>${esc(agentLabels[t.status]||t.status)} · 已记录${Object.keys(t.results).length}/${order.length}步</small></div><div class="actions"><button class="btn" data-task="${esc(t.id)}">查看</button><a class="btn" href="/api/agent/report?id=${encodeURIComponent(t.id)}" download="agent-report.json">下载审计报告</a>${['queued','paused','erp_pending'].includes(t.status)?`<button class="btn primary" data-start="${esc(t.id)}">${t.status==='erp_pending'?'核对原回执':t.status==='paused'?'继续':'开始'}</button>`:''}${t.status==='needs_review'&&!t.libraryDraftAttempted?`<button class="btn primary" data-resume-review="${esc(t.id)}">核对后继续</button>`:''}${['blocked','inspection_done'].includes(t.status)&&!t.exportAvailable&&(!['junfeiPreflight','publish','verify'].some(k=>t.results[k])||t.erpWorkflowVersion===2&&!t.results.publish)?`<button class="btn" data-recheck="${esc(t.id)}">更新资料重检</button>`:''}${t.status==='running'?`<button class="btn" data-pause="${esc(t.id)}">暂停</button>`:''}${t.exportAvailable?`<a class="btn" href="/api/agent/download?id=${encodeURIComponent(t.id)}" download="delivery.zip">下载交付包</a>`:''}${t.junfeiPlanAvailable?`<a class="btn" href="/api/agent/junfei-plan?id=${encodeURIComponent(t.id)}" download="junfei-preflight.zip">下载钧飞预检包</a>`:''}</div></div>`}).join(''):'<div class="empty">还没有任务。先保存店铺档案，再创建第一款准备检查。</div>';
   tasks.querySelectorAll('[data-task]').forEach(button=>button.onclick=()=>{agentSelectedTask=button.dataset.task;agentShowDetail(epoch)});
@@ -216,7 +216,7 @@ async function agentRefresh(epoch){
   }
   const cliStatus={ready:'待领取',running:'执行中',blocked:'待补齐',uncertain:'需对账',done:'台账流程完成',unavailable:'台账暂不可读'};
   const cliStage={selection:'选品',sourcing:'货源',research:'竞品关键词',listing:'Listing',images:'图片',export:'导出',publish:'ERP提交',verify:'结果核对',complete:'已记录全部阶段'};
-  document.getElementById('agentCliTasks').innerHTML=cliTasks.length?`<h3>CLI 台账 · 关联产品</h3><p class="sub">状态按 CLI 原记录显示。请从 CLI 续跑或对账。</p>${cliTasks.map(task=>`<div class="agent-step"><strong>${esc(task.productId)} · ${esc(cliStatus[task.status]||task.status)}</strong><p>${esc(task.marketplace)} · ${esc(task.asin)} · ${esc(cliStage[task.stage]||'阶段待核对')}</p><small>任务 ${esc(task.id)} · 发现批次 ${esc(task.cycleId)}</small></div>`).join('')}`:'';
+  document.getElementById('agentCliTasks').innerHTML=cliTasks.length?`<div class="wb-title-label"><h3>CLI 台账 · 关联产品</h3>${workbenchHelp('这里显示 CLI 的原始记录。可从 CLI 续跑或对账。','CLI 台账 · 关联产品')}</div>${cliTasks.map(task=>`<div class="agent-step"><strong>${esc(task.productId)} · ${esc(cliStatus[task.status]||task.status)}</strong><p>${esc(task.marketplace)} · ${esc(task.asin)} · ${esc(cliStage[task.stage]||'阶段待核对')}</p><small>任务 ${esc(task.id)} · 发现批次 ${esc(task.cycleId)}</small></div>`).join('')}`:'';
   for(const action of ['start','pause','recheck'])tasks.querySelectorAll('[data-'+action+']').forEach(button=>button.onclick=async()=>{
    button.disabled=true;try{agentSelectedTask=button.dataset[action];if(action==='recheck')await flushWorkspace();await agentApi(action,{id:agentSelectedTask});await agentRefresh(epoch)}catch(error){toast(error.message)}finally{button.disabled=false}
   });

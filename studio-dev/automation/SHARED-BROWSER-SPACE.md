@@ -1,8 +1,19 @@
-# Shared browser-space coordinator: source-only primitive
+# Shared browser-space coordination
+
+The native EGO adapter, workbench discovery, bound 1688 captures, publisher
+desktop and image skill use the same live lock for a numeric TaskSpace on the
+current Windows account. This prevents overlapping participating calls. Initial
+1688 space creation and reconnects without a resolved target ID use the durable
+1688 queue. Each native job owns its submission receipts and recovery rules.
+The separate durable enrollment and fencing protocol documented below remains
+available for isolated tests.
 
 ## Status and scope
 
-`shared_browser_space.py` is an offline-tested coordination primitive. It is **not imported or enforced by the existing browser adapters**, is not an activation switch, and does not make the production workbench or the finite discovery pilot production-ready. No production coordinator, enrollment, database, configuration, or browser operation was created by this change. Existing scripts retain their existing behavior. See [the adapter adoption inventory](SHARED-BROWSER-ADOPTION.md) before any integration.
+`Coordinator` is the offline-tested durable protocol. Its enrollment, operation
+fencing and terminal evidence rules are independent of the live lock. The
+[adapter adoption inventory](SHARED-BROWSER-ADOPTION.md) records the original
+dispatch boundaries and requirements for durable integration.
 
 The implemented boundary is one complete operation in **cooperating processes under the same Windows user**, using one trusted enrollment and the same default root. It is not machine-global across OS users and does not control direct EGO CLI calls, unmodified scripts, malicious participants, or browser operations outside the guarded callback. It does not reserve a whole multi-step discovery run between calls.
 

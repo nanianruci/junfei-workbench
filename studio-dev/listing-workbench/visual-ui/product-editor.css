@@ -11,12 +11,14 @@
 .pe-shell .pe-back { display:inline-flex; align-items:center; gap:6px; padding:0; color:var(--pe-accent); background:none; border:0; margin-bottom:10px; }
 .pe-context { color:var(--pe-muted); font-size:12px; padding:4px 8px; border:1px solid var(--pe-line); border-radius:6px; max-width:100%; }
 .pe-tags span,.pe-source span { border:1px solid var(--pe-line); background:var(--pe-wash); border-radius:8px; padding:4px 8px; overflow-wrap:anywhere; }
-.pe-layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:20px; align-items:start; }
+.pe-layout { display:grid; grid-template-columns:clamp(250px,24%,320px) minmax(0,1fr); gap:24px; align-items:start; }
 .pe-main,.pe-step { min-width:0; }
-.pe-rail { position:sticky; top:16px; padding:16px; gap:12px; background:#fff; border:1px solid var(--pe-line); border-radius:12px; }
-.pe-search { display:flex; align-items:center; gap:8px; color:var(--pe-muted); }
+.pe-rail { position:sticky; top:16px; height:auto; overflow:visible; padding:16px; gap:12px; background:#fff; border:1px solid var(--pe-line); border-radius:12px; }
+.pe-search { position:relative; display:block; color:var(--pe-muted); }
+.pe-search > svg { position:absolute; inset-inline-end:12px; top:50%; transform:translateY(-50%); pointer-events:none; }
 .pe-shell input:not([type=checkbox]),.pe-shell textarea,.pe-actions select { border:1px solid var(--pe-line); border-radius:7px; background:white; color:var(--pe-ink); font:inherit; padding:8px 10px; min-width:0; }
 .pe-search input,.pe-form textarea { width:100%; }
+.pe-shell .pe-search input:not([type=checkbox]) { padding-inline-end:36px; }
 .pe-projects { display:grid; gap:4px; max-height:calc(100vh - 224px); overflow:auto; }
 .pe-projects .pe-project-button {
   display:grid; gap:4px; min-width:0; text-align:left; padding:8px;
@@ -41,7 +43,19 @@
 .pe-card-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
 .pe-card :where(p,details) { margin-top:8px; }
 .pe-actions,.pe-tags,.pe-source { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
-.pe-shell :where(.pe-heading,.pe-rail,.pe-card,.pe-main) button:not(.lst-btn):not(.vs-button):not(.pe-lightbox):not(.btn):not(.link):not(.pe-project-button):not([data-wb-step]),
+.pe-asin-form,.pe-asin-source,.pe-asin-reference { display:flex; align-items:center; flex-wrap:wrap; }
+.pe-asin-form { gap:12px 20px; }
+.pe-shell .pe-actions:is(.pe-asin-fields,.pe-asin-buttons,.pe-copy-actions) { gap:12px; }
+.pe-asin-fields input { width:190px; }
+.pe-asin-fields select { min-width:72px; }
+.pe-asin-source { gap:8px 20px; margin-top:16px; padding-top:14px; border-top:1px solid var(--pe-line); }
+.pe-asin-reference { gap:6px 12px; min-width:0; color:var(--pe-muted); overflow-wrap:anywhere; }
+.pe-asin-reference a { white-space:nowrap; }
+.pe-copy-progress:not(:empty) { margin-bottom:16px; }
+.pe-copy-progress > .generation-progress { margin:0; }
+.pe-copy-actions > #listingGenerationActions { display:contents; }
+.pe-shell :is(.pe-asin-buttons,.pe-copy-actions) :is(button,a) { min-height:40px; padding-inline:12px; white-space:nowrap; }
+.pe-shell :where(.pe-heading,.pe-rail,.pe-card,.pe-main) button:not(.lst-btn):not(.vs-button):not(.pe-lightbox):not(.btn):not(.link):not(.pe-project-button):not(.wb-help-trigger):not([data-wb-step]),
 .pe-actions a { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--pe-line); border-radius:7px; padding:7px 10px; background:#fff; color:var(--pe-ink); font:inherit; cursor:pointer; text-decoration:none; }
 .pe-shell button:disabled { opacity:.55; cursor:not-allowed; }
 .pe-shell .pe-card .pe-primary,.pe-shell .pe-main .pe-next { background:var(--pe-accent)!important; border-color:var(--pe-accent)!important; color:#fff!important; }
@@ -69,7 +83,6 @@
 .pe-keyword-match-kind.variant { background:#dfedf9; color:#275786; }
 .pe-keyword-variant-copy { margin:2px 0 5px; }
 .pe-shell textarea.pe-keyword-input { position:relative; display:block; background:transparent; }
-.pe-shell .pe-keyword-hint { color:var(--pe-muted); font-size:12px; margin-top:8px; }
 .pe-keyword-tooltip {
   position:fixed; z-index:1500; width:370px; max-width:calc(100vw - 16px);
   max-height:min(420px,calc(100vh - 16px)); overflow:auto; box-sizing:border-box;

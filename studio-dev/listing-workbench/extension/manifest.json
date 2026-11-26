@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "钧飞跨境 · 商品采集",
-  "version": "0.7.15",
+  "version": "0.7.16",
   "description": "采集Amazon观察、复制商品主图至剪贴板并粘贴到1688搜索框。",
   "permissions": [
     "activeTab",
@@ -11,6 +11,8 @@
     "clipboardWrite"
   ],
   "host_permissions": [
+    "http://127.0.0.1:18765/*",
+    "http://127.0.0.1:18768/*",
     "http://127.0.0.1:18769/*",
     "http://127.0.0.1:18775/*"
   ],

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import runpy
 import sqlite3
 import tempfile
 import time
@@ -46,6 +47,16 @@ class SupplierQueueTests(unittest.TestCase):
         self.assertEqual(sum(x is not None for x in claims), 1)
         with closing(q.connect()) as c, c:
             self.assertEqual(c.execute('SELECT COUNT(*) FROM captures').fetchone()[0], 1)
+
+    def test_bound_capture_does_not_dispatch_while_task_space_is_locked(self):
+        module = Path(__file__).resolve().parent.parent / 'automation/browser_space_lock.py'
+        active_space = runpy.run_path(str(module))['active_space']
+        with active_space(ROUTE['spaceId'], root=self.root), \
+                patch.object(q.runtime_environment, 'ego_space', side_effect=lambda space: active_space(space, root=self.root)), \
+                patch.object(q.shutil, 'which', return_value='fixture-ego'), \
+                patch.object(q.subprocess, 'run') as dispatch:
+            self.assertEqual(q.browser_capture(URL, ROUTE), {'status': 'paused', 'reason': 'ego_space_unavailable'})
+            dispatch.assert_not_called()
 
     def test_existing_product_is_reused_without_starting_browser(self):
         with closing(sqlite3.connect(app_paths.DATA/'studio.sqlite3')) as c, c:

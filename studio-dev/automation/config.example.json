@@ -45,7 +45,13 @@
     "handling_days": 3,
     "shipping_template": "",
     "mode": "draft",
-    "recipe": "junfei-publisher/recipe.json"
+    "recipe": "junfei-publisher/recipe.json",
+    "cross_marketplace_followup": {
+      "enabled": false,
+      "source_marketplace": "US",
+      "target_marketplace": "UK",
+      "trigger": "publishing"
+    }
   },
   "profiles": {},
   "defaults": {

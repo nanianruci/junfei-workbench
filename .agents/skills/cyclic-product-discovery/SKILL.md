@@ -7,7 +7,7 @@ description: Review an existing cyclic-discovery candidate or continue a verifie
 
 在工作台选品入口保留候选站点、ASIN、货源与排名证据。通过现有入库流程关联原报告和任务。
 
-候选入库后，使用同仓库 `amazon-full-pipeline` 的 `next` 命令接收后端指定的选品核对任务。按派单核对 `selection.reference`、`selection.tasks`、`supplier`，沿用原任务、预算与竞品 ASIN。发现冲突、材料缺失或未知回执时，交回 `blocked` 并指出需要核对的原记录。
+候选入库后，使用项目中的 `studio-dev/automation/codex_workbench.py next` 接收后端派发的选品核对任务。按派单核对 `selection.reference`、`selection.tasks`、`supplier`，沿用原任务、预算与竞品 ASIN。发现冲突、材料缺失或未知回执时，交回 `blocked` 并指出需要核对的原记录。
 
 逐项结果按 `assignment.checks` 绑定原路径、摘要及 `ready` 或 `blocked`。选品利润采用报价情景，文本预算只记录授权，本次接续止于文案。
 

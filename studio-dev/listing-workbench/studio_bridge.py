@@ -133,15 +133,18 @@ def get_view(product):
             'selectedGallery':selected_gallery,
             'automaticProductSource':True}
 
-def task_save(task):
+def task_save(task, *, handoff=None):
     with closing(visual.db()) as c,c:
         c.execute('CREATE TABLE IF NOT EXISTS studio_tasks (id TEXT PRIMARY KEY, product_id TEXT, body TEXT, created REAL)')
         c.execute('INSERT OR REPLACE INTO studio_tasks VALUES (?,?,?,?)',(task['id'],task['productId'],json.dumps(task,ensure_ascii=False),task['created']))
+        if handoff:
+            import codex_handoff
+            codex_handoff.record(c,handoff,task['id'],'queued')
     return task
 
-def task_new(product,kind,total=1):
+def task_new(product,kind,total=1,*,handoff=None):
     task={'id':uuid.uuid4().hex,'productId':product['id'],'kind':kind,'status':'running','stage':'starting','message':'任务已提交到后台','progress':0,'done_count':0,'total':total,'created':time.time()}
-    task_save(task);return task
+    task_save(task,handoff=handoff);return task
 
 def latest_project(pid,kind):
     return next((p for p in visual.list_projects(pid)['projects'] if p.get('deliverable','gallery')==kind),None)
@@ -262,7 +265,7 @@ def persist(data,product):
         r={**r,'id':uuid.uuid4().hex,'projectId':pid};visual.save_run(r)
     return {'message':'新版本已保存，修改的图片需重新生成','id':pid}
 
-def render(data,product,listing=None):
+def render(data,product,listing=None,*,codex_target=None,handoff=None):
     import product_insights
     kind=data.get('deliverable','gallery');p=latest_project(product['id'],kind)
     if not p:raise ValueError('请先策划套图')
@@ -291,19 +294,28 @@ def render(data,product,listing=None):
     if config.get('size') not in ('1:1','4:5','3:4','16:9') or config.get('resolution') not in ('1K','2K','4K'):raise ValueError('图片比例或分辨率不支持')
     config={key:config[key] for key in ('model','size','resolution')}
     with LOCK:
+        if codex_target is not None:
+            from listing_jobs import digest
+            if (digest(latest_project(product['id'],kind)) != codex_target['projectDigest']
+                    or settings['activeProvider'] != codex_target['provider']):
+                raise ValueError('分镜或图像服务已变化，请重新核对')
+            if any(r.get('projectId')==p['id'] and r.get('slot') in indices
+                   for r in visual.list_projects(product['id'])['runs']):
+                raise ValueError('该图位已有原任务，请先核对')
         tasks=get_view(product)['jobs']
         if any(tasks.get(k,{}).get('status')=='running' for k in ('plan','render_set','render_image')):raise ValueError('图片正在制作，请等待当前批次完成')
         for index in indices:
             visual.check_render_prompt(p,index)
         p['confirmed']=True;p['set_qa']=None;visual.save_project(p)
-        task=task_new(product,'render_set' if len(indices)>1 else 'render_image',len(indices))
+        task=task_new(product,'render_set' if len(indices)>1 else 'render_image',len(indices),handoff=handoff)
     def work():
         failures=[]
         try:
             for position,index in enumerate(indices):
                 task.update(stage='card-'+str(index),message='正在生成第'+str(index+1)+'张并检查外观与文字',progress=position/len(indices));task_save(task)
                 r=visual.generate({'id':p['id'],'slot':index,'autoRepair':data.get('autoRepair') is True,**config},
-                                  expected_provider=settings['activeProvider'])
+                                  expected_provider=settings['activeProvider'], only_new=codex_target is not None,
+                                  expected_project_digest=digest(p) if codex_target is not None else None)
                 while True:
                     r=visual.get_run(r['id'])
                     if r['status'] in TERMINAL:break

@@ -1,9 +1,7 @@
-"""Durable, cooperative EGO space exclusion. No import-time I/O or auto-enrollment.
+"""Cooperative EGO space exclusion. No import-time I/O or auto-enrollment.
 
-Source-only primitive: existing browser adapters do not use this module yet.
-The trust boundary is participating processes under ONE Windows user, with one
-explicitly enrolled identity. This is not protection against a direct CLI,
-another OS user, malicious disk edits, or restoration of an old complete ledger.
+The live execution lock covers participating adapters. The durable coordinator
+below still requires explicit enrollment and operation-specific evidence.
 """
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -17,6 +15,7 @@ import sqlite3
 import stat
 import threading
 import uuid
+from browser_space_lock import windows_local_app_data
 
 
 SCHEMA_VERSION = 1
@@ -140,30 +139,10 @@ def default_root():
     No fallback to cwd, TEMP, environment variables or a per-account directory.
     Other platforms must supply explicit synthetic roots in tests.
     """
-    if os.name != 'nt':
-        raise CoordinationError('windows_known_folder_required')
-    import ctypes
-    from ctypes import wintypes
-    class GUID(ctypes.Structure):
-        _fields_ = [('data1', wintypes.DWORD), ('data2', wintypes.WORD),
-                    ('data3', wintypes.WORD), ('data4', ctypes.c_ubyte * 8)]
-    local_app_data = GUID.from_buffer_copy(uuid.UUID('F1B32785-6FBA-4FCF-9D55-7B8E7F157091').bytes_le)
-    shell = ctypes.WinDLL('shell32', use_last_error=True)
-    ole = ctypes.WinDLL('ole32', use_last_error=True)
-    shell.SHGetKnownFolderPath.argtypes = [ctypes.POINTER(GUID), wintypes.DWORD,
-                                         wintypes.HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
-    shell.SHGetKnownFolderPath.restype = ctypes.c_long
-    ole.CoTaskMemFree.argtypes = [ctypes.c_void_p]
-    ole.CoTaskMemFree.restype = None
-    result = ctypes.c_wchar_p()
-    if shell.SHGetKnownFolderPath(ctypes.byref(local_app_data), 0, None, ctypes.byref(result)) != 0:
-        raise CoordinationError('windows_known_folder_unavailable')
     try:
-        root = Path(result.value)
-    finally:
-        ole.CoTaskMemFree(ctypes.cast(result, ctypes.c_void_p))
-    if not root.is_absolute():
-        raise CoordinationError('windows_known_folder_invalid')
+        root = windows_local_app_data()
+    except ValueError as error:
+        raise CoordinationError(str(error)) from error
     return root / 'JunfeiListingWorkbench' / 'browser-space-coordinator-v1'
 
 

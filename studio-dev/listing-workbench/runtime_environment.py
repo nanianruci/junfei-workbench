@@ -1,13 +1,27 @@
 """Portable path discovery and read-only diagnostics; never starts external tools."""
 import argparse
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
 import shutil
 import sys
+import runpy
 
 PROJECT_ENV = 'JUNFEI_PROJECT_ROOT'
 PYTHON_ENV = 'JUNFEI_PYTHON'
+DEFAULT_PORT = 18769
+
+
+def workbench_port(environ=None):
+    env = os.environ if environ is None else environ
+    try:
+        port = int(env.get('JUNFEI_PORT', DEFAULT_PORT))
+    except (TypeError, ValueError):
+        port = 0
+    if not 1024 <= port <= 65535:
+        raise ValueError('JUNFEI_PORT 必须是 1024 至 65535 之间的端口号')
+    return port
 
 
 def _validated_root(value, origin):
@@ -84,6 +98,17 @@ def ego_command(project=None, environ=None):
     return python_command(env) + ['-X', 'utf8', str(script)]
 
 
+@lru_cache(maxsize=1)
+def _ego_lock():
+    bundled = Path(__file__).resolve().parent.parent / 'automation/browser_space_lock.py'
+    script = bundled if bundled.is_file() else project_root() / 'automation/browser_space_lock.py'
+    return runpy.run_path(str(script))['active_space']
+
+
+def ego_space(space_id):
+    return _ego_lock()(space_id)
+
+
 def node_command(app_dir=None, root=None, environ=None):
     """Use the same Node resolution for diagnostics and actual local preflight."""
     app = Path(app_dir or Path(__file__).resolve().parent)
@@ -112,6 +137,13 @@ def diagnose(app_dir=None, environ=None):
     }
     def check(key, ok, message):
         checks.append({'id': key, 'ok': bool(ok), 'message': message})
+    env = os.environ if environ is None else environ
+    try:
+        result['workbenchUrl'] = f'http://127.0.0.1:{workbench_port(env)}'
+    except ValueError as error:
+        result['connectionIssue'] = str(error)
+    if env.get('JUNFEI_ACCOUNT_DATA'):
+        result['accountDataDirectory'] = str(Path(env['JUNFEI_ACCOUNT_DATA']).expanduser().resolve())
     try:
         root = project_root(app_dir, environ)
         result['projectRoot'] = str(root)
@@ -120,7 +152,9 @@ def diagnose(app_dir=None, environ=None):
     except (OSError, ValueError, TypeError) as error:
         check('project-config', False, str(error))
         return result
-    for relative in ('automation/ego_browser.py', 'junfei-publisher/ego_link.py',
+    if result.get('connectionIssue'):
+        check('workbench-port', False, result['connectionIssue'])
+    for relative in ('automation/ego_browser.py', 'automation/browser_space_lock.py', 'junfei-publisher/ego_link.py',
                      'junfei-publisher/ego-existing-draft.mjs',
                      'junfei-publisher/ego-library-package.mjs',
                      'junfei-publisher/listing.mjs'):
@@ -152,6 +186,23 @@ def diagnose(app_dir=None, environ=None):
     space = browser.get('task_space_id')
     check('ego-task-space', type(space) is int and space >= 0 and browser.get('engine') == 'ego-lite',
           '仅验证 EGO 工作区配置格式；实际归属及店铺登录尚未验证')
+    bindings = browser.get('task_bindings')
+    result['egoBindings'] = [{'binding': name, 'taskSpaceId': value.get('task_space_id'),
+                              'configured': type(value.get('task_space_id')) is int
+                              and value['task_space_id'] >= 0 and bool(value.get('task_space_name'))}
+                             for name, value in (bindings.items() if isinstance(bindings, dict) else ())
+                             if isinstance(value, dict)]
+    assets = root / 'listing-workbench'
+    try:
+        templates = json.loads((assets / 'official-image-templates/manifest.json').read_text(encoding='utf-8'))
+        counts = (templates.get('layoutCount'), templates.get('verifiedImageCount'), templates.get('repairCount'))
+        files = templates.get('files') or {}
+        missing = sum(not (assets / 'official-image-templates' / name).is_file() for name in files)
+        result['imageResources'] = {'templateFilesPresent': counts == (240, 240, 24) and bool(files) and missing == 0,
+                                    'missingManifestFiles': missing}
+    except (OSError, ValueError, TypeError, AttributeError):
+        result['imageResources'] = {'templateFilesPresent': False}
+    result['imageResources']['localModelRuntimePresent'] = (assets / 'models/local-instance/runtime.json').is_file()
     result['runtimeFilesReady'] = all(item['ok'] for item in checks)
     return result
 

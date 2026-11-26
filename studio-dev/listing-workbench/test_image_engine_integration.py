@@ -1,8 +1,10 @@
 import tempfile,unittest,hashlib,uuid
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 from PIL import Image
 import app_paths,image_engine as engine,official_image_templates as library
+import codex_handoff
 
 
 class IntegrationTests(unittest.TestCase):
@@ -47,6 +49,23 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(request['repairCapabilities']['source']['model'],'real-codex-model')
             self.assertEqual(request['repairSize'],'');self.assertTrue(request['repairRequestedOptimize'])
             with self.assertRaises(ValueError):engine.start({**data,'requestId':uuid.uuid4().hex,'brief':'stale'}, {'id':'p'})
+
+    def test_native_task_and_agent_handoff_register_before_launch_and_recover_by_request(self):
+        request_id = uuid.uuid4().hex
+        data = {'requestId': request_id, 'mode': 'repair', 'references': [self.source], 'brief': '只修背景'}
+        scope = (1, 'p', 'US', request_id)
+        with patch.object(engine, 'require_codex'), patch.object(engine, 'launch') as launch:
+            def lose_response(task_id):
+                with closing(engine.db()) as connection:
+                    self.assertEqual(codex_handoff.lookup(connection, scope)['jobId'], task_id)
+                raise RuntimeError('Lost response fixture')
+            launch.side_effect = lose_response
+            with self.assertRaises(RuntimeError):
+                engine.start(data, {'id':'p'}, handoff=scope)
+            found = engine.by_request('p', request_id)
+            self.assertIsNone(engine.by_request('other', request_id))
+            self.assertEqual(engine.start(data, {'id':'p'}, handoff=scope)['id'], found['id'])
+            launch.assert_called_once()
 
 
 if __name__=='__main__':unittest.main()

@@ -264,6 +264,24 @@ def provider_rejection(job):
     return None
 
 
+def product_cost_receipts(product_id):
+    path=ROOT/'image_jobs.sqlite3'
+    if not path.is_file():
+        return []
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as conn:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='image_costs'").fetchone():
+            return []
+        rows=conn.execute('SELECT id,reserved_fen,actual_fen,state,body FROM image_costs WHERE product_id=? ORDER BY rowid',
+                          (product_id,))
+        results=[]
+        for rid,reserved,actual,state,body in rows:
+            quote=json.loads(body).get('quote',{})
+            results.append({'reservationId':rid,'quoteCurrency':quote.get('currency'),
+                            'quoteMaximum':quote.get('maximumRmb') if quote.get('currency')=='CNY' else quote.get('maximumUsd'),
+                            'reservedFen':reserved,'settledFen':actual,'state':state})
+        return results
+
+
 def budget_status(product_id=None):
     with closing(storage()) as conn, conn:
         return image_budget.status(conn, product_id)

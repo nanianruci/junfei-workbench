@@ -14,6 +14,11 @@ import erp_collection as erp
 
 class FormalERPTests(unittest.TestCase):
     def setUp(self):
+        policy = {'publishing': {'cross_marketplace_followup': {'enabled': True,
+                    'source_marketplace': 'US', 'target_marketplace': 'UK', 'trigger': 'publishing'}}}
+        config = patch('publication_policy._configuration', return_value=policy)
+        config.start()
+        self.addCleanup(config.stop)
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
         self.product={'id':'P','sku':'PARENT','name':'Fixture product','market':'US'}

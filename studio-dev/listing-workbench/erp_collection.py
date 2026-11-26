@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import uuid
 import os
 from contextlib import contextmanager
@@ -153,7 +154,8 @@ def view(user,workspace,pid):
     issues=[]
     variant_rows=eligible_variant_rows(p)
     from creative_skills import select
-    if select(p)['category']=='apparel':
+    import image_engine_delivery
+    if select(p)['category']=='apparel' and image_engine_delivery.selection(p['id']) is None:
         gallery=studio_bridge.get_view(p).get('sets',{}).get('gallery',{})
         try:
             required_size_chart(p,gallery,(row[3] for row in variant_rows))
@@ -190,45 +192,53 @@ def finished_snapshot(user,p,listing,destination,folder,prior=None):
         raise ValueError('钧飞五点或搜索词超过字段限制，请先调整已保存文案')
     groups=variant_colours.catalog(p)
     if not groups or any(not g['ready'] for g in groups.values()):raise ValueError('颜色尺码与货源对应资料未完成')
-    view=studio_bridge.get_view(p);plan=view.get('sets',{}).get('gallery',{})
-    chart_hash=required_size_chart(p,plan,(row[3] for row in variant_rows))
-    master=variant_colours.resolve(groups,p.get('masterColor'))
-    if not variant_colours.has_reference(groups.get(master),plan.get('product_source_url') or ((plan.get('images') or [{}])[0].get('product_source_url'))):
-        raise ValueError('母版与本款真实颜色参考不匹配')
-    selected={};project=plan.get('_projectId')
-    generated=generated_gallery.export_images(p,project)
-    if generated is not None:selected[master]=[(raw,info) for raw,info in generated]
+    import image_engine_delivery
+    selected = image_engine_delivery.galleries(p)
+    plan = {}
+    master = variant_colours.resolve(groups, p.get('masterColor'))
+    if selected is not None:
+        chart_hash = selected[master][6][1]['sha256']
+        plan = {'images': [{'shot_type': 'detail' if i in (1, 2) else None} for i in range(7)]}
     else:
-        images=[]
-        for slot,image in enumerate(plan.get('images',[])):
-            if not image.get('_runId') or image.get('_status') not in ('approved','awaiting_manual') or image.get('render_qa',{}).get('ready') is False:
-                raise ValueError('母版图位未通过草稿检查')
-            raw,mime=studio_bridge.result_image(image['_runId'])
-            if chart_hash and slot==6 and hashlib.sha256(raw).hexdigest()!=chart_hash:
-                raise ValueError('待补尺码：第7张尺码图文件与校对记录不一致')
-            images.append((raw,{'slot':slot,'mime':mime,'runId':image['_runId'],'humanReviewed':image.get('human_reviewed') is True,'status':image['_status']}))
-        selected[master]=images
-    for v in colour_sets.list_sets(p['id'])['sets']:
-        if generated is not None and v.get('masterId')!=colour_master.selection_id(p):continue
-        if generated is None and project and v.get('masterId')!=project:continue
-        key=v.get('colorKey') or variant_colours.resolve(groups,v.get('color'))
-        if key not in groups or key==master:continue
-        if v.get('validated') is not True or not variant_colours.has_reference(groups[key],v.get('reference')):continue
-        rows=[]
-        for item in sorted(v.get('items',[]),key=lambda i:i['slot']):
-            if not item.get('image') or item.get('status') not in ('approved','awaiting_manual') or (item.get('qc') or {}).get('pass') is not True:
-                raise ValueError('换色图位未通过草稿检查：'+groups[key]['color'])
-            if chart_hash and item['slot']==6:
-                source=selected[master][6][1]
-                native_match=source.get('runId') and item.get('baseRun')==source['runId']
-                generated_match=(source.get('jobId') and item.get('sourceJobId')==source['jobId']
-                                 and item.get('sourceImageIndex')==source['imageIndex'])
-                if not (native_match or generated_match):
-                    raise ValueError('待补尺码：第7张尺码图与当前已校对母版未关联：'+groups[key]['color'])
-            raw,mime=colour_sets.image_bytes(v['id'],item['slot'])
-            rows.append((raw,{'slot':item['slot'],'mime':mime,'setId':v['id'],'humanReviewed':v.get('manual') is True and item['status']=='approved','status':item['status'],'warnings':(item.get('qc') or {}).get('warnings',[])}))
-        if key in selected:raise ValueError('同色有多套成品，请先明确保留版本')
-        selected[key]=rows
+        view=studio_bridge.get_view(p);plan=view.get('sets',{}).get('gallery',{})
+        chart_hash=required_size_chart(p,plan,(row[3] for row in variant_rows))
+        master=variant_colours.resolve(groups,p.get('masterColor'))
+        if not variant_colours.has_reference(groups.get(master),plan.get('product_source_url') or ((plan.get('images') or [{}])[0].get('product_source_url'))):
+            raise ValueError('母版与本款真实颜色参考不匹配')
+        selected={};project=plan.get('_projectId')
+        generated=generated_gallery.export_images(p,project)
+        if generated is not None:selected[master]=[(raw,info) for raw,info in generated]
+        else:
+            images=[]
+            for slot,image in enumerate(plan.get('images',[])):
+                if not image.get('_runId') or image.get('_status') not in ('approved','awaiting_manual') or image.get('render_qa',{}).get('ready') is False:
+                    raise ValueError('母版图位未通过草稿检查')
+                raw,mime=studio_bridge.result_image(image['_runId'])
+                if chart_hash and slot==6 and hashlib.sha256(raw).hexdigest()!=chart_hash:
+                    raise ValueError('待补尺码：第7张尺码图文件与校对记录不一致')
+                images.append((raw,{'slot':slot,'mime':mime,'runId':image['_runId'],'humanReviewed':image.get('human_reviewed') is True,'status':image['_status']}))
+            selected[master]=images
+        for v in colour_sets.list_sets(p['id'])['sets']:
+            if generated is not None and v.get('masterId')!=colour_master.selection_id(p):continue
+            if generated is None and project and v.get('masterId')!=project:continue
+            key=v.get('colorKey') or variant_colours.resolve(groups,v.get('color'))
+            if key not in groups or key==master:continue
+            if v.get('validated') is not True or not variant_colours.has_reference(groups[key],v.get('reference')):continue
+            rows=[]
+            for item in sorted(v.get('items',[]),key=lambda i:i['slot']):
+                if not item.get('image') or item.get('status') not in ('approved','awaiting_manual') or (item.get('qc') or {}).get('pass') is not True:
+                    raise ValueError('换色图位未通过草稿检查：'+groups[key]['color'])
+                if chart_hash and item['slot']==6:
+                    source=selected[master][6][1]
+                    native_match=source.get('runId') and item.get('baseRun')==source['runId']
+                    generated_match=(source.get('jobId') and item.get('sourceJobId')==source['jobId']
+                                     and item.get('sourceImageIndex')==source['imageIndex'])
+                    if not (native_match or generated_match):
+                        raise ValueError('待补尺码：第7张尺码图与当前已校对母版未关联：'+groups[key]['color'])
+                raw,mime=colour_sets.image_bytes(v['id'],item['slot'])
+                rows.append((raw,{'slot':item['slot'],'mime':mime,'setId':v['id'],'humanReviewed':v.get('manual') is True and item['status']=='approved','status':item['status'],'warnings':(item.get('qc') or {}).get('warnings',[])}))
+            if key in selected:raise ValueError('同色有多套成品，请先明确保留版本')
+            selected[key]=rows
     if set(selected)!=set(groups):raise ValueError('拟交付颜色缺少完整成品套图')
     assets=[];by_colour={};folder.mkdir(parents=True,exist_ok=True)
     for key,rows in selected.items():
@@ -271,7 +281,47 @@ def finished_snapshot(user,p,listing,destination,folder,prior=None):
     return result
 
 
-def start(user,workspace,data):
+def review_packet(snapshot):
+    """Expose only business fields, resolving each SKU's ordered local image identities."""
+    variants={}
+    for row in snapshot['goodsItems']:
+        images=[{k:snapshot['assets'][i].get(k) for k in
+                 ('slot','sha256','color','runId','jobId','setId','imageIndex','status','humanReviewed')}
+                for i in row['imageIndices']]
+        variants[row['sku']]={**{k:v for k,v in row.items() if k!='imageIndices'},'images':images}
+    dest=snapshot['destination']
+    return {'contentDigest':inputs.content_digest(snapshot),'goods':snapshot['goods'],'variants':variants,
+            'store':snapshot['store'],'marketplace':snapshot['marketplace'],'handlingDays':snapshot['handlingDays'],
+            'purchaseCny':dest.get('purchaseCny'),'currency':dest.get('currency') or
+            inputs.MARKETS[snapshot['marketplace']][0], 'pricingSource':(snapshot.get('pricingBasis') or {}).get('source')}
+
+
+def review_digest(packet):
+    return hashlib.sha256(json.dumps(packet,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+
+
+def preflight(user,product,listing,destination,prior):
+    if prior and prior.get('draftId') and not (ROOT/prior['id']/'receipt.json').is_file():
+        raise ValueError('缺少原草稿回执，请人工对账')
+    old_file=ROOT/prior['id']/'collection.json' if prior else None
+    original=json.loads(old_file.read_text(encoding='utf-8')) if old_file and old_file.is_file() else None
+    with tempfile.TemporaryDirectory(prefix='junfei-erp-review-') as folder:
+        current=finished_snapshot(user,product,listing,destination,Path(folder),original)
+    if original and inputs.content_digest(current)!=inputs.content_digest(original):
+        raise ValueError('当前成品与原采集快照不同，请核对原草稿')
+    # A resumed worker uses the original packet. Check current price and artwork
+    # identities as well as the business-content comparison used by older jobs.
+    if original:
+        original['destination']={**current['destination'],**original.get('destination',{})}
+        frozen=review_packet(original)
+        fresh=review_packet(current)
+        if any(frozen[k]!=fresh[k] for k in ('purchaseCny','currency','variants')):
+            raise ValueError('原草稿价格或图位证据与当前成品不同，请核对原回执')
+        return frozen
+    return review_packet(current)
+
+
+def start(user,workspace,data,*,reviewed_digest=None,handoff=None):
     if not isinstance(data,dict) or set(data)-{'productId','destinationId','expectedListing'}:raise ValueError('采集参数无效')
     p=product_for(workspace,data.get('productId'))
     ds=[d for d in destinations(user) if d['id']==data.get('destinationId')]
@@ -285,15 +335,22 @@ def start(user,workspace,data):
         if row:
             prior=json.loads(row[0]);receipt=ROOT/prior['id']/'receipt.json'
             live=public(prior)
-            if live['status'] in ('queued','running'):return {**live,'reused':True}
+            if live['status'] in ('queued','running'):
+                if handoff:raise ValueError('原草稿任务已在执行，请核对原任务')
+                return {**live,'reused':True}
             snapshot_file=ROOT/prior['id']/'collection.json'
             if snapshot_file.is_file():
                 original=json.loads(snapshot_file.read_text(encoding='utf-8'))
                 current=finished_snapshot(user,p,listing,d,ROOT/prior['id']/'media',original)
                 if inputs.content_digest(current)!=inputs.content_digest(original):
                     raise ValueError('当前成品与原采集版本不同；已保留原记录，请先对账更新，不能复用旧成功回执')
+            if reviewed_digest and (live['status']!='needs_reconciliation' or
+                    review_digest(preflight(user,p,listing,d,live))!=reviewed_digest):
+                raise ValueError('原草稿或审核版本已变化')
             if prior['status']=='verified' and prior.get('engine')=='native-v2':return {**public(prior),'reused':True}
-            if prior.get('draftId') and not receipt.is_file():return {**live,'reused':True}
+            if prior.get('draftId') and not receipt.is_file():
+                if handoff:raise ValueError('缺少原草稿回执，请人工对账')
+                return {**live,'reused':True}
             job=prior;job.setdefault('history',[]).append({'error':job.pop('error',None),'resumedAt':time.time()})
             job.update(status='queued',phase='等待浏览器，从持久回执对账续跑',runOwner=RUNTIME,ownerPid=os.getpid(),engine='native-v2')
             c.execute('UPDATE jobs SET status=?,body=? WHERE id=?',('queued',json.dumps(job,ensure_ascii=False),job['id']))
@@ -302,6 +359,12 @@ def start(user,workspace,data):
                  'parentSku':p['sku'],'status':'queued','phase':'读取当前成品','createdAt':time.time(),'updatedAt':time.time(),'published':False,
                  'runOwner':RUNTIME,'ownerPid':os.getpid(),'engine':'native-v2'}
             c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?)',(job['id'],user,p['id'],d['id'],job['status'],json.dumps(job,ensure_ascii=False)))
+        if handoff:
+            import codex_handoff
+            codex_handoff.record(c,handoff,job['id'],'queued')
+        if reviewed_digest:
+            job['reviewedDigest']=reviewed_digest
+            c.execute('UPDATE jobs SET body=? WHERE id=?',(json.dumps(job,ensure_ascii=False),job['id']))
         ACTIVE.add(job['id']);launch=(job,p,listing,d)
     # Commit the identity before starting a worker or any external operation.
     threading.Thread(target=execute,args=launch,daemon=True).start()
@@ -356,6 +419,12 @@ def execute(job,p,listing,d):
             commerce=inputs.commerce(job['accountId'],p,d,eligible_variant_rows(p),snapshot)
             snapshot['destination']={**inputs.transport(job['accountId'],p,commerce),**snapshot.get('destination',{})}
         else:snapshot=finished_snapshot(job['accountId'],p,listing,d,folder/'media')
+        if job.get('reviewedDigest'):
+            if review_digest(review_packet(snapshot))!=job['reviewedDigest']:
+                raise ValueError('草稿成品与已批准的逐项证据不同，请重新核对')
+            for asset in snapshot['assets']:
+                if hashlib.sha256(Path(asset['path']).read_bytes()).hexdigest()!=asset['sha256']:
+                    raise ValueError('原成品图片字节与审核记录不符')
         snapshot['destination'].update(destinationId=d['id'],workflowVersion=2,categoryHints=inputs.category_hints(p))
         snapshot_file.write_text(json.dumps(snapshot,ensure_ascii=False,indent=2),encoding='utf-8')
         job.update(variantCount=len(snapshot['goodsItems']),imageCount=len(snapshot['assets']),phase='等待专属浏览器');persist(job)

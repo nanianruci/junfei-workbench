@@ -79,7 +79,7 @@ function erp({job,ready=false}){
   const exports={},requests=[],prepares=[],effects=[],verified=[];
   const onVerified=id=>verified.push(id);
   const react={useState:()=>{const i=index++;return [states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:value=>({current:value}),useEffect:(run,deps)=>effects.push({run,deps})};
-  const requireModule=name=>name==='react'?react:name==='./delivery-readiness'?helpers:require('./visual-ui/node_modules/'+name);
+  const requireModule=name=>name==='react'?react:name==='./delivery-readiness'?helpers:name==='./HelpTip'?{default:()=>null}:require('./visual-ui/node_modules/'+name);
   new Function('require','exports',compile('ErpCollection.tsx'))(requireModule,exports);
   const previousFetch=global.fetch;
   let respond=async()=>({ok:true,json:async()=>({job:job||{id:'created',destinationId:'us'}})});
@@ -171,7 +171,7 @@ test('ERP verification refreshes publication readiness with GET while preserving
   const states=[oldView,'us','original error',true,'unsaved UK store','unsaved shipping','brand','9.99','88','3',false,true];
   const effects=[],requests=[];let index=0;
   const react={useState:()=>{const i=index++;return [states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:value=>({current:value}),useEffect:(run,deps)=>effects.push({run,deps})};
-  const exports={};new Function('require','exports',compile('PublicationFlow.tsx'))(name=>name==='react'?react:require('./visual-ui/node_modules/'+name),exports);
+  const exports={};new Function('require','exports',compile('PublicationFlow.tsx'))(name=>name==='react'?react:name==='./HelpTip'?{default:()=>null}:require('./visual-ui/node_modules/'+name),exports);
   const previousFetch=global.fetch;
   global.fetch=async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>({...oldView,targets:[{...oldView.targets[0],ready:true,missing:[]}],jobs:[]})};};
   try{

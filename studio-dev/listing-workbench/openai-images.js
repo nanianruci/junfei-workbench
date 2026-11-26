@@ -6,17 +6,15 @@ renderSettings = async function () {
  const box = document.createElement('section');
  box.className = 'panel box';
  box.style.cssText = 'max-width:760px;margin-top:24px';
- box.innerHTML = `<h2>OpenAI 兼容图片接口</h2>
- <p>配置本账号的图片服务。产品参考图、分镜和图上文字沿用视觉工作台；保存或查询模型不会生成图片。</p>
- <p class="sub">Codex Tools 本机反代地址：http://127.0.0.1:8787/v1，图片模型 gpt-image-2，参考图选择 Images edits。反代须在本机运行。</p>
+ box.innerHTML = `<div class="wb-title-label"><h2>OpenAI 兼容图片接口</h2>${workbenchHelp('配置本账号图片服务。使用 Codex Tools 时须启动本机反代，地址为 http://127.0.0.1:8787/v1，可用 gpt-image-2 和 Images edits。查询模型不会生图。','OpenAI 兼容图片接口')}</div>
  <label class="field"><span>Base URL</span><input id="customImageBase" type="url" placeholder="https://api.openai.com/v1" autocomplete="url"></label>
  <label class="field"><span>图片模型 ID</span><input id="customImageModel" placeholder="gpt-image-2"></label>
  <label class="field"><span>API Key（留空保留）</span><input id="customImageKey" type="password" autocomplete="off"></label>
  <div class="actions"><label>参考图接口 <select id="customImageProtocol"><option value="edits">Images edits（文件上传）</option><option value="reference_json">Images generations（image_urls）</option></select></label>
  <label>质量 <select id="customImageQuality"><option>low</option><option selected>medium</option><option>high</option><option>auto</option></select></label></div>
- <p class="sub">按服务商文档选择参考图接口。切换协议不会自动重试已有任务。<span id="customImageDimensions">像素尺寸由视觉工作台中的比例和分辨率决定。</span></p>
+ <p id="customImageDimensions" class="sub" hidden></p>
  <div class="actions"><button id="saveCustomImages" class="btn primary">保存并设为当前生图服务</button><button id="testCustomImages" class="btn">查询可用模型（不生图）</button><button id="clearCustomImages" class="btn">清除本账号密钥</button></div>
- <p id="customImageStatus" role="status"></p><p class="sub">实际生成前仍需核实对应模型、协议、质量和尺寸的报价及预算；生成完成后需核对产品外观和文字。</p>`;
+ <p id="customImageStatus" role="status"></p>`;
  appendModelSettingsPanel('images',box);
  box.querySelectorAll('.field input').forEach(input => input.style.width = '100%');
  const el = id => box.querySelector('#'+id), status = el('customImageStatus');
@@ -28,7 +26,10 @@ renderSettings = async function () {
   el('customImageModel').value = c.model || 'gpt-image-2';
   el('customImageProtocol').value = c.protocol || 'edits';
   el('customImageQuality').value = c.quality || 'medium';
-  if (c.outputSize) el('customImageDimensions').textContent = `出图尺寸 ${c.outputSize.replace('x','×')}；上游尺寸不一致时保留原图并等比适配。`;
+  if (c.outputSize) {
+   el('customImageDimensions').hidden = false;
+   el('customImageDimensions').textContent = `出图尺寸 ${c.outputSize.replace('x','×')}；上游尺寸不一致时保留原图并等比适配。`;
+  }
   status.textContent = `当前生图服务：${d.provider}；本账号兼容接口密钥${c.hasKey?'已配置':'未配置'}。`;
  } catch (error) { status.textContent = error.message; }
  const fields = () => ({provider:'openai', base_url:el('customImageBase').value,

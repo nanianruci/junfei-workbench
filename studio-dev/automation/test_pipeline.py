@@ -87,8 +87,7 @@ class PipelineTests(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.cfg = read_json(ROOT / 'automation/config.json')
-        # Test fixtures must not depend on the operator's live paid-image switch.
+        self.cfg = read_json(ROOT / 'automation/config.example.json')
         self.cfg['images']['enabled'] = False
         self.cfg['selection']['freshness_basis'] = 'seller_listing'
         self.cfg['selection'].pop('brand_policy', None)
@@ -391,10 +390,30 @@ class PipelineTests(unittest.TestCase):
         self.p.db.execute("UPDATE jobs SET stage=6,status='running',token='t' WHERE id=?", (job,))
         e = self.evidence(job, 'publish')
         with self.assertRaises(ValueError): self.p.finish(job, 't', e)
-        e['external_ids'] = ['test-sku']
+        e['external_ids'] = ['12345']
+        with self.assertRaisesRegex(ValueError, '发布回执'):
+            self.p.finish(job, 't', e)
+        publishing = json.loads(self.p.get(job)['config'])['publishing']
+        e.update(publication={'marketplace':'US', 'store':publishing['store'], 'publish_id':'12345',
+                              'child_skus':['sku-1']}, workbench_publication_id='original-task')
         self.p.finish(job, 't', e)
         self.assertEqual(self.p.status()[0]['stage'], 'verify')
         self.assertEqual(self.p.get(job)['status'], 'ready')
+        self.p.db.execute("UPDATE jobs SET status='running',token='verify-token' WHERE id=?", (job,))
+        verify = self.evidence(job, 'verify')
+        verify.update(external_ids=['12345'], workbench_publication_id='original-task')
+        from unittest.mock import patch
+        from datetime import datetime, timezone
+        receipt = {'workbench_publication_id':'original-task', 'publish_id':'12345', 'marketplace':'US',
+                   'store':publishing['store'], 'observed_at':datetime.now(timezone.utc).isoformat(),
+                   'children':[{'sku':'sku-1','asin':'B000000001','status':'online'}]}
+        with patch('pipeline.workbench_call', return_value={**receipt, 'children':[]}):
+            with self.assertRaisesRegex(ValueError, '全部原子 SKU'):
+                self.p.finish(job, 'verify-token', verify)
+        with patch('pipeline.workbench_call', return_value=receipt) as call:
+            self.p.finish(job, 'verify-token', verify)
+        self.assertIn('publishId=12345', call.call_args.args[0])
+        self.assertEqual(self.p.get(job)['status'], 'done')
 
     def test_doctor_catches_uncalibrated_publisher(self):
         self.assertTrue(any('未完成' in item for item in doctor(self.cfg)))

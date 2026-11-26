@@ -280,8 +280,8 @@ def promote(db, root, user, data, workspace, web_products):
     return outcomes
 
 
-def overview(root, owner):
-    records = links(root / 'studio.sqlite3', owner)
+def overview(root, owner, product_id=None):
+    records = links(root / 'studio.sqlite3', owner, product_id)
     items = [{'id': r['job_id'], 'productId': r['product_id'], 'marketplace': r['market'],
               'asin': r['asin'], 'cycleId': r['cycle_id'], 'status': 'unavailable', 'stage': None,
               'executor': 'cli'} for r in records]

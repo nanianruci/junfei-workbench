@@ -47,8 +47,35 @@ class PublicationAPITests(unittest.TestCase):
             self.assertEqual(self.call('/api/publication/start',payload,Origin='https://other.example')[0],403)
             self.assertEqual(self.call('/api/publication/start',payload,**{'X-Workspace-Account':'2'})[0],409)
             start.assert_not_called()
-            self.assertEqual(self.call('/api/publication/start',payload)[0],202)
+            self.assertEqual(self.call('/api/publication/start',payload)[0],400)
+            start.assert_not_called()
+            proof={'confirmationDigest':'a'*64,'operatorPassword':'isolated-password-12345'}
+            self.assertEqual(self.call('/api/publication/start',{**payload,**proof})[0],202)
             self.assertEqual(start.call_args.args[0],1)
+            self.assertEqual(start.call_args.kwargs,{'confirmation':'a'*64})
+
+    def test_local_confirmation_is_initialized_once_and_still_requires_reauthentication(self):
+        data = {'productId':'P', 'destinationId':'US', 'markets':['US'], 'confirmed':True}
+        password = 'new-local-fixture-password'
+        preview = {'digest':'a'*64, 'markets':['US']}
+        with patch.object(accounts, 'DB', Path(self.temp.name) / 'fresh-local.sqlite3'), \
+                patch.object(server, 'local_mode', return_value=True), \
+                patch.object(server.publication_flow, 'preview', return_value=preview), \
+                patch.object(server.publication_flow, 'start', return_value={'id':'queued-fixture'}) as start:
+            self.assertTrue(self.call('/api/publication/preview', {'action':'start','request':data},
+                                      auth=False)[1]['needsLocalConfirmationPassword'])
+            setup = '/api/publication/setup-confirmation'
+            self.assertEqual(self.call(setup, {'password':password}, auth=False)[0],403)
+            self.assertEqual(self.call(setup, {'password':password}, auth=False, Origin=self.base)[0],200)
+            self.assertEqual(self.call(setup, {'password':'cannot-change-existing'}, auth=False, Origin=self.base)[0],400)
+            self.assertFalse(self.call('/api/publication/preview', {'action':'start','request':data},
+                                       auth=False)[1]['needsLocalConfirmationPassword'])
+            proof = {'confirmationDigest':preview['digest']}
+            self.assertEqual(self.call('/api/publication/start', {**data, **proof,
+                            'operatorPassword':'wrong-test-password'}, auth=False)[0],400)
+            start.assert_not_called()
+            self.assertEqual(self.call('/api/publication/start', {**data, **proof,
+                            'operatorPassword':password}, auth=False)[0],202)
 
     def test_read_only_views_cannot_start_publication(self):
         with patch.object(server.publication_flow,'view',return_value={'targets':[],'jobs':[]}), \
@@ -78,7 +105,13 @@ class PublicationAPITests(unittest.TestCase):
                 self.assertEqual(self.call('/api/publication/continue',payload,Origin='https://other.example')[0],403)
                 self.assertEqual(self.call('/api/publication/continue',payload,**{'X-Workspace-Account':'2'})[0],409)
                 resume.assert_not_called()
-                self.assertEqual(self.call('/api/publication/continue',payload)[0],202)
+                if payload.get('observeOnly'):
+                    self.assertEqual(self.call('/api/publication/observe',{'id':'original-job'})[0],202)
+                else:
+                    self.assertEqual(self.call('/api/publication/continue',payload)[0],400)
+                    resume.assert_not_called()
+                    proof={'confirmationDigest':'a'*64,'operatorPassword':'isolated-password-12345'}
+                    self.assertEqual(self.call('/api/publication/continue',{**payload,**proof})[0],202)
                 self.assertEqual(resume.call_args.args,(1,payload));start.assert_not_called()
 
 if __name__=='__main__':unittest.main()

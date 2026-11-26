@@ -153,10 +153,12 @@ def _sync_copy(user, task, request, state):
         link = importlib.util.module_from_spec(spec); spec.loader.exec_module(link)
         request_path = folder_for(task) / ('request-' + uuid.uuid4().hex + '.json')
         request_path.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
-        command = link.ego_draft_command(request_path)
-        state['keep'] = True
+        browser = link.browser_config()
+        command = link.ego_draft_command(request_path, config=browser)
         try:
-            response = subprocess.run(command, capture_output=True, timeout=65)
+            with runtime_environment.ego_space(browser['task_space_id']):
+                state['keep'] = True
+                response = subprocess.run(command, capture_output=True, timeout=65)
         except subprocess.TimeoutExpired:
             raise ValueError('ERP保存结果未知，请先对账；不自动重发') from None
         if response.returncode or not path.is_file():

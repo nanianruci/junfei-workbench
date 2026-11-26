@@ -11,7 +11,12 @@ def freeze(config,recipe,product_id,get_task,asset,bind_template):
         raise ValueError('生成颜色变体仅适用于明确的生成式编辑，不能冒充原像素换色或混用修图模板')
     if len(recipe['references'])!=2:raise ValueError('颜色变体需要原母版和一张真实同款目标照片')
     label=config.get('targetColour','')
-    if not isinstance(label,str)or not re.fullmatch(r'[A-Za-z][A-Za-z -]{0,48}',label):raise ValueError('目标颜色名称无效')
+    if not isinstance(label, str) or not 1 <= len(label) <= 60 or not label.isprintable() or not any(c.isalpha() for c in label):
+        raise ValueError('目标颜色名称无效')
+    source_variant=recipe.get('sourceVariant')
+    if (not source_variant or source_variant.get('color')!=label
+            or not source_variant.get('children')):
+        raise ValueError('目标颜色必须与当前商品中已核对的真实颜色及子SKU完全一致')
     index=config.get('sourceResultIndex')
     if type(index)is not int or index<0:raise ValueError('缺少原母版图位')
     parent=get_task(config.get('sourceTaskId'))
@@ -30,7 +35,10 @@ def freeze(config,recipe,product_id,get_task,asset,bind_template):
         raise ValueError('母版所用原模板配图或原文已改变')
     copy_strings=copy.deepcopy(result.get('shot',{}).get('copy',[]))
     if not isinstance(copy_strings,list)or any(not isinstance(v,str)for v in copy_strings):raise ValueError('原母版文字记录无效')
-    copy_strings=[re.sub(r'\bPALE PINK\b',label.upper(),v,flags=re.I)for v in copy_strings]
+    source_label = (parent.get('request', {}).get('sourceVariant') or {}).get('color')
+    pattern = re.escape(source_label) if source_label else r'PALE PINK'
+    copy_strings = [re.sub(r'(?<!\w)' + pattern + r'(?!\w)', lambda _: label.upper(), value, flags=re.I)
+                    for value in copy_strings]
     return {'version':VERSION,'sourceTaskId':parent['id'],'sourceResultIndex':index,
       'sourceSha256':source_sha,'targetReferenceSha256':recipe['referenceSha256'][1],
       'targetColour':label,'slotKind':result.get('shot',{}).get('apparelKind'),
@@ -45,13 +53,12 @@ def compile_prompt(recipe):
     v=recipe['generatedColourVariant'];t=v.get('template')
     prompt=('Create ONE native square finished colour variant of REFERENCE 1, the checked master artwork. '
       'REFERENCE 2 is the ACTUAL SAME-PRODUCT TARGET COLOUR PHOTOGRAPH, not a generic colour name. '
-      'Change only the featured jacket to the actual target shade and supported material response. '
-      'Apply it to EVERY depiction of this jacket: all people, small insets, circular details, macro fabric panels, '
-      'both sleeves, standing collar including its visible inside edge, cuffs, hem and zipper/pocket surrounds. '
-      'Keep quilting geometry, seam construction, cut, fit, surface texture and fabric highlights dimensional. '
-      'Match body/sleeve material differences and matching hardware to reference 2; do not invent panels or trim. '
+      'Change only the featured garment to the actual target shade and supported material response. '
+      'Apply it to EVERY depiction of this garment, including all wearers, insets and detail views. '
+      'Keep the original seams, cut, fit, fabric structure and textile highlights. Match the actual '
+      'material and hardware from reference 2 without adding any garment features. '
       'Keep original people, faces, skin, hair, hands, separate clothes, gaps, background, pose, camera, crop and artwork layout. '
-      'Do not dye hair, hands, denim or background; do not fill sleeve-to-body openings. '
+      'Keep all exposed skin, hair, background and separate garments unchanged. Preserve visible gaps. '
       'Do not flatten black fabric into uniform ink or turn pale fabric into clipped white/metallic/nonnatural blue shadows. '
       'Reference 1 controls this exact composition. Reference 3, when present, is the ORIGINAL TEMPLATE ARTWORK: '
       'use its design hierarchy only, never its product, colours, brand, claims or wording. '
@@ -59,8 +66,7 @@ def compile_prompt(recipe):
       'This is an expressly authorised GENERATIVE variant, not a claim of unchanged exterior pixels.\n'
       '[TARGET COLOUR LABEL; REAL PHOTO IS COLOUR TRUTH] '+v['targetColour']+'\n'
       '[EXACT ARTWORK COPY] '+json.dumps(v['expectedCopy'],ensure_ascii=False)+'\n'
-      'Retain these exact existing strings and their typographic hierarchy; the old PALE PINK headline is '
-      'replaced only by the recorded target-colour headline. Empty copy means no added text.\n'
+      'Retain these exact strings and their original typographic hierarchy. Empty copy means no added text.\n'
       '[USER REQUEST] '+recipe['brief'])
     if t:
         if hashlib.sha256(t['prompt'].encode('utf8')).hexdigest()!=t['promptSha256']:raise ValueError('模板原文哈希改变')
@@ -74,7 +80,7 @@ def inspect(recipe,result,source,json_model):
     instruction=('Independently compare the ACTUAL images, at full view and about 300px thumbnail. '
       'Image 1 is checked master artwork (layout and product structure); image 2 is the new generated output; '
       'image 3 is the real same-product target colour photograph. Image 4, when present, is the original template artwork (layout only). '
-      'The jacket colour INTENTIONALLY changes from image 1; judge colour against image 3. '
+      'Judge the garment colour against image 3. '
       'All original product identity, seams, pockets, quilting, fit, textile detail, people/skin/hair, unrelated clothing, '
       'negative gaps, scene, crop, layout and exact allowed copy must remain coherent. '
       'Check every repeated person/garment and macro/inset photo, inner collar, cuffs, zipper, hands and hair. '

@@ -8,7 +8,7 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 function load(product={}){
  const controls={modal:{open:false,showModal(){this.open=true},close(){this.open=false}},factsForm:{values:{},elements:{purchasePriceUniformAcrossVariants:{checked:false},packageWeightUniformAcrossVariants:{checked:false}}},cancelFacts:{}};
  const events={saved:0,messages:[]};
- const context=vm.createContext({URL,structuredClone,names:{},render(){},persist(){events.saved++},
+ const context=vm.createContext({URL,structuredClone,market:'US',names:{},render(){},persist(){events.saved++},
   window:{addEventListener(){}},product:()=>product,state:{reviews:{}},view:'listing',
   toast:text=>events.messages.push(text),esc:value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
   document:{getElementById:id=>controls[id]},FormData:class{constructor(form){return new Map(Object.entries(form.values))}},

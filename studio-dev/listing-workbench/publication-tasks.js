@@ -21,9 +21,9 @@ function publicationObservationAllowsCompletion(observation,taskId){
 
 function publicationJobCompleted(job){
  return job.status==='submitted'&&job.publishSubmitted===true&&
-  publicationNumber(job.usPublishId)&&publicationNumber(job.ukPublishId)&&
-  publicationObservationAllowsCompletion(job.usPublicationObservation,job.usPublishId)&&
-  publicationObservationAllowsCompletion(job.ukPublicationObservation,job.ukPublishId);
+  publicationNumber(job.usPublishId)&&publicationObservationAllowsCompletion(job.usPublicationObservation,job.usPublishId)&&
+  (job.markets?.join() === 'US' || publicationNumber(job.ukPublishId)&&
+   publicationObservationAllowsCompletion(job.ukPublicationObservation,job.ukPublishId));
 }
 
 function publicationReceiptSuperseded(jobs,taskId){
@@ -36,8 +36,8 @@ function publicationReceiptSuperseded(jobs,taskId){
 function productCompletionRecord(product){
  const owner=typeof signedUser==='undefined'?null:signedUser?.id;
  const jobs=productPublicationJobsFor(product),formal=jobs.find(publicationJobCompleted);
- if(formal)return{market:'US / UK',store:[formal.sourceStore,formal.targetStore].filter(Boolean).join(' / '),taskId:formal.usPublishId,
-  ukTaskId:formal.ukPublishId,checkedAt:formal.submittedAt?new Date(formal.submittedAt*1000).toISOString():null,verifiedLive:false};
+ if(formal)return{market:formal.markets?.join(' / ')||'US / UK',store:[formal.sourceStore,formal.targetStore].filter(Boolean).join(' / '),taskId:formal.usPublishId,
+  ukTaskId:formal.ukPublishId,checkedAt:formal.submittedAt?new Date(formal.submittedAt*1000).toISOString():null,verifiedLive:formal.onlineVerified===true};
  const accepted=publicationAcceptedStatuses;
  const p=product.erpPublication;
  if(p&&publicationNumber(p.recordId||p.publishId||p.taskId)&&accepted.has(p.status)&&
@@ -111,12 +111,15 @@ async function mountPublicationTasks(host){
  try{
   const r=await fetch('/api/publication/list',{headers:{'X-Workspace-Account':String(owner.id)}}),data=await r.json();
   if(!current())return;if(!r.ok)throw Error(data.error||'发布记录读取失败');
-  host.innerHTML='<h2>美国 → 英国发布任务</h2><p class="sub">从产品交付页的正式发布入口启动。草稿交付任务继续保留。</p>'+(data.jobs.length?data.jobs.map(j=>`<div class="reviewitem"><div><strong>${esc(j.productName||j.parentSku)}</strong><p>${esc(j.sourceStore)} → ${esc(j.targetStore)}</p><p>${esc(j.phase)}</p><small>美国发布 ${esc(j.usPublishId||'未取得')} · 英国草稿 ${esc(j.ukDraftId||'未取得')} · 英国发布 ${esc(j.ukPublishId||'未取得')}</small>${j.error?`<p>${esc(j.error)}</p>`:''}</div><div class="actions"><button class="btn" data-publication-product="${esc(j.productId)}">查看产品</button>${j.status==='needs_reconciliation'?`<button class="btn" data-publication-resume="${esc(j.id)}">核对原回执并继续</button>`:''}</div></div>`).join(''):'<p>暂无发布任务，未自动处理现有产品。</p>');
+  host.innerHTML=`<div class="wb-title-label"><h2>亚马逊发布任务</h2>${workbenchHelp('从商品交付页启动正式发布。美英联动时先提交美国，取得任务号后再复制到英国，核对店铺、原 SKU、GBP 售价和豁免。此处记录各阶段的原回执。','亚马逊发布任务')}</div>`+(data.jobs.length?data.jobs.map(j=>`<div class="reviewitem"><div><strong>${esc(j.productName||j.parentSku)}</strong><p>${esc(j.sourceStore)} → ${esc(j.targetStore)}</p><p>${esc(j.phase)}</p><small>美国发布 ${esc(j.usPublishId||'未取得')} · 英国草稿 ${esc(j.ukDraftId||'未取得')} · 英国发布 ${esc(j.ukPublishId||'未取得')}</small>${j.error?`<p>${esc(j.error)}</p>`:''}</div><div class="actions"><button class="btn" data-publication-product="${esc(j.productId)}">查看产品</button>${j.status==='needs_reconciliation'?`<button class="btn" data-publication-resume="${esc(j.id)}">核对原回执并继续</button>`:''}</div></div>`).join(''):'<p>暂无发布任务，未自动处理现有产品。</p>');
   host.querySelectorAll('[data-publication-product]').forEach(button=>button.onclick=()=>openListingWorkspace(button.dataset.publicationProduct,'delivery'));
   host.querySelectorAll('[data-publication-resume]').forEach(button=>button.onclick=async()=>{
-   if(!current()||!window.confirm('从原回执核对并继续此美国→英国发布任务？已有复制和发布意图不会重新提交。'))return;
+   if(!current())return;
    button.disabled=true;
-   try{const r=await fetch('/api/publication/continue',{method:'POST',headers:{'Content-Type':'application/json','X-Workspace-Account':String(owner.id)},body:JSON.stringify({id:button.dataset.publicationResume,confirmed:true})});const data=await r.json();if(!r.ok)throw Error(data.error);if(current())await mountPublicationTasks(host);}
+   try{
+    const result=await window.confirmPublicationOperation(owner.id,'continue',{id:button.dataset.publicationResume,confirmed:true});
+    if(result&&current())await mountPublicationTasks(host);
+   }
    catch(e){if(current())toast(e.message)}finally{if(button.isConnected)button.disabled=false}
   });
   publicationTaskTimer=setTimeout(()=>{if(current())void mountPublicationTasks(host)},3000);

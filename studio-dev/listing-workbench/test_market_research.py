@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,14 +21,19 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(m.estimate_package({'pkgWeight':'1','pkgDimensions':'1 x 2 x 3'})['status'],'missing')
 
     def test_freight_missing_costs_and_invalid_channel(self):
-        options=m.channels('US')
-        self.assertTrue(options)
-        data=dict(market='US',channel=options[0]['id'],weightKg=.05,lengthCm=8,widthCm=8,heightCm=8)
-        r=m.freight(data)
-        self.assertEqual(r['chargeableKg'],.064)
-        self.assertIsNone(r['profit'])
-        for extra in ({'channel':'../secret|x'},{'weightKg':-1}):
-            with self.assertRaises(ValueError):m.freight({**data,**extra})
+        with tempfile.TemporaryDirectory() as root, patch.object(m, 'RATE_ROOT', Path(root)):
+            rates = {'records': [{'country_code': 'US', 'channel_code': 'fixture', 'start_weight': 0,
+                                  'end_weight': 1000, 'first_freight': 10, 'handling_fee': 1}]}
+            (Path(root) / 'fixture.json').write_text(json.dumps(rates), encoding='utf-8')
+            options = m.channels('US')
+            self.assertTrue(options)
+            data = dict(market='US', channel=options[0]['id'], weightKg=.05, lengthCm=8, widthCm=8, heightCm=8)
+            result = m.freight(data)
+            self.assertEqual(result['chargeableKg'], .064)
+            self.assertIsNone(result['profit'])
+            for extra in ({'channel':'../secret|x'}, {'weightKg': -1}):
+                with self.assertRaises(ValueError):
+                    m.freight({**data, **extra})
 
     def test_import_reference_boundary_duplicate_and_deleted(self):
         with tempfile.TemporaryDirectory() as root, patch.object(m,'DB',Path(root)/'reports.db'):

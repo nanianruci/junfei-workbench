@@ -11,6 +11,7 @@ import tempfile
 import runtime_environment
 
 MARKER = 'portable-release.json'
+DEFAULT_PORT = '18768'
 
 
 def release(base):
@@ -37,7 +38,7 @@ def configure(base, environ=None):
     if meta is None:
         return False
     env.setdefault('JUNFEI_ACCOUNT_DATA', str(Path.home() / 'AmazonWorkbenchPortableData'))
-    env.setdefault('JUNFEI_PORT', '18768')
+    env.setdefault('JUNFEI_PORT', DEFAULT_PORT)
     data = Path(env['JUNFEI_ACCOUNT_DATA']).expanduser().resolve()
     env['JUNFEI_ACCOUNT_DATA'] = str(data)
     if env.get('JUNFEI_PROJECT_ROOT', '').strip():
@@ -110,8 +111,10 @@ def handle_cli(base, argv=None):
     if not args or args[0] not in ('--self-check', '--workbench-tool'):
         return False
     env = os.environ.copy()
-    if not env.get('JUNFEI_PROJECT_ROOT', '').strip() and release(base):
-        env['JUNFEI_PROJECT_ROOT'] = str(readonly_project(base, env))
+    if release(base):
+        env.setdefault('JUNFEI_PORT', DEFAULT_PORT)
+        if not env.get('JUNFEI_PROJECT_ROOT', '').strip():
+            env['JUNFEI_PROJECT_ROOT'] = str(readonly_project(base, env))
     if args[0] == '--self-check':
         if len(args) != 2:
             raise ValueError('Usage: --self-check NEW_REPORT_FILE.json')
@@ -130,8 +133,10 @@ def handle_cli(base, argv=None):
     previous_argv = sys.argv
     sys.argv = [str(script), *args[2:]]
     attach_cli_streams()
+    sys.path.insert(0, str(script.parent))
     try:
         runpy.run_path(str(script), run_name='__main__')
     finally:
+        sys.path.remove(str(script.parent))
         sys.argv = previous_argv
     return True

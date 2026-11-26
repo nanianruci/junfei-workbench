@@ -127,8 +127,7 @@ function mountModelSettingsLayout(){
  <section id="modelGroup-images" aria-label="图片模型"></section>
  <section id="modelGroup-agent" aria-label="智能体使用模型">
    <div class="panel box">
-     <h2>智能体使用模型</h2>
-     <p>任务默认使用固定规则。启用 AI 规划后，智能体沿用本账号保存的文案模型。</p>
+     <div class="wb-title-label"><h2>智能体使用模型</h2>${workbenchHelp('默认按固定规则运行。启用 AI 规划时，使用本账号保存的文案模型。','智能体使用模型')}</div>
      <p id="agentModelSummary" role="status">正在读取文案模型…</p>
      <button type="button" class="ds-button" id="agentModelGoToCopy">前往文案模型</button>
    </div>
@@ -166,12 +165,12 @@ function showAgentModel(layout,config){
 async function renderSettings(){
  const content=document.getElementById('content');
  content.innerHTML=title('模型设置','管理工作台使用的模型与数据接口。')+`<div class="panel box" style="max-width:760px">
- <h2>文案模型</h2><form id="settingsForm">
+ <div class="wb-title-label"><h2>文案模型</h2><span id="textEndpoint"></span></div><form id="settingsForm">
  <label class="field"><span>服务</span><select id="textProvider">
  <option value="deepseek">DeepSeek 直连</option><option value="codex_tools">Codex Tools 本机反代</option></select></label>
  <label class="field"><span>模型 ID</span><input id="textModel" list="textModelOptions" required maxlength="160" style="width:100%"><datalist id="textModelOptions"></datalist></label>
  <label class="field" id="textKeyRow"><span>DeepSeek 密钥</span><input id="apiKey" type="password" autocomplete="off" placeholder="留空保留现有密钥" style="width:100%"></label>
- <p id="textEndpoint" class="sub"></p><p id="keyState" role="status">读取配置中…</p>
+ <p id="keyState" role="status">读取配置中…</p>
  <div class="actions"><button class="btn primary" id="saveSettings">保存配置</button>
  <button class="btn" type="button" id="testKey">测试连接</button>
  <button class="btn" type="button" id="clearKey">清除 DeepSeek 密钥</button></div><p id="testResult" role="status"></p></form></div>`;
@@ -187,9 +186,9 @@ async function renderSettings(){
   field('textKeyRow').style.display=isProxy?'none':'';
   key.disabled=isProxy;
   clearButton.hidden=isProxy;
-  field('textEndpoint').textContent=isProxy
+  layout.querySelector('#textEndpoint').innerHTML=workbenchHelp(isProxy
    ? 'http://127.0.0.1:8787/v1/chat/completions · 使用图片模型中已配置的本机反代密钥。'
-   : 'https://api.deepseek.com/chat/completions · 密钥按当前账号加密保存。';
+   : 'https://api.deepseek.com/chat/completions · 密钥按当前账号加密保存。','文案模型');
   const active=config?.provider==='Codex Tools'?'codex_tools':'deepseek';
   status.textContent=!config?'模型配置读取失败'
    : service.value!==active?'保存后切换到所选服务'

@@ -1,3 +1,4 @@
+import HelpTip from './HelpTip';
 // Adapted from Hector-xue/IvyeaOps, AGPL-3.0-only. See NOTICE.md.
 // 第三步：视觉套图 —— 策划 / 逐张与整套生成 / 质检复核，全部后台 job 驱动。
 // 布局沿用 Visual Studio 的 storyboard + inspector（vs-* 样式体系），
@@ -201,8 +202,7 @@ export default function LegacyVisualStep({ state }: { state: ListingState }) {
       <header className="vs-header">
         <div>
           <div className="vs-kicker"><Sparkles size={14} /> A+ 兼容工作区</div>
-          <h2>A+ 内容制作</h2>
-          <p>自动接入产品资料与 Listing 文案；策划、生成和质检在后台运行，可选质检失败自动重画一次。</p>
+          <div className="wb-title-label"><h2>A+ 内容制作</h2><HelpTip label="A+ 内容制作">使用产品资料与 Listing 文案。策划、生成和质检在后台运行，可设置质检失败后自动重画一次。</HelpTip></div>
         </div>
         {plan?.quality && (
           <div className={`vs-quality ${plan.quality.issues.some((i) => i.severity === "error") ? "has-error" : "is-ready"}`}>
@@ -324,8 +324,7 @@ export default function LegacyVisualStep({ state }: { state: ListingState }) {
       {!plan ? (
         <div className="vs-empty">
           <div className="vs-empty-icon"><Layers3 size={28} /></div>
-          <h3>先编译整套图文提示词</h3>
-          <p>系统会锁定商品真值、统一色板与设计语言，再把每张图的场景、排版和精确文案编译成最终生图指令。策划在后台运行，完成后自动出现在这里。</p>
+          <div className="wb-title-label"><h3>先编译整套图文提示词</h3><HelpTip label="图文提示词">按已确认的商品事实统一色板和设计语言，再为每张图编译场景、排版和文案。后台策划完成后，结果会自动出现在这里。</HelpTip></div>
           <div className="vs-empty-flow">
             <span>商品真值 + 前两步内容</span><b>→</b><span>整套提示词</span><b>→</b><span>图文一次直出</span><b>→</b><span>质检 + 自动重画</span>
           </div>

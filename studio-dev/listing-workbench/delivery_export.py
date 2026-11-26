@@ -105,7 +105,19 @@ def build(product,listing,view=None):
         z.writestr(prefix+'keywords.csv','\ufeff'+keywords.getvalue())
         counts={}
         current_master=view.get('sets',{}).get('gallery',{}).get('_projectId')
-        generated=generated_gallery.export_images(product,current_master)
+        import image_engine_delivery
+        engine_galleries = image_engine_delivery.galleries(product)
+        generated = generated_gallery.export_images(product,current_master) if engine_galleries is None else None
+        for key, rows in (engine_galleries or {}).items():
+            color = re.sub(r'[\\/:*?"<>|\x00-\x1f]', '_', groups[key]['color']).strip(' .')[:60]
+            for raw, info in rows:
+                ext = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp'}[info['mime']]
+                name = prefix + color + str(info['slot'] + 1).zfill(2) + ext
+                z.writestr(name, raw)
+                counts[color] = info['slot'] + 1
+                manifest.append({**info, 'file': name, 'color': color, 'colorKey': key, 'kind': 'gallery',
+                                 'source': 'image_engine_approved', 'skuBindingReady': True,
+                                 'draftBindingEligible': True, 'setId': 'engine-' + key})
         if generated is not None:
             color=image_colour(product,{})
             for raw,info in generated:
@@ -120,7 +132,7 @@ def build(product,listing,view=None):
                 manifest.append({**info,'file':name,'color':color,'colorKey':master_key if observed else key_for(color),
                     'kind':'gallery','source':'completed_image_job_selection'})
         for kind,plan in view.get('sets',{}).items():
-            if kind=='gallery' and generated is not None:continue
+            if kind=='gallery' and (generated is not None or engine_galleries is not None):continue
             color=image_colour(product,plan)
             for index,image in enumerate(plan.get('images',[])):
                 rid=image.get('_runId')
@@ -143,7 +155,7 @@ def build(product,listing,view=None):
                 manifest.append({'file':name,'sha256':hashlib.sha256(raw).hexdigest(),'color':color,'colorKey':(master_key if master_matches else '') if observed else key_for(color),
                     'kind':kind,'slot':index,'runId':rid,'status':image.get('_status'),'humanReviewed':image.get('human_reviewed',False)})
         # A replacement storyboard must not silently export superseded variants.
-        for variant in colour_sets.list_sets(product['id'])['sets']:
+        for variant in ([] if engine_galleries is not None else colour_sets.list_sets(product['id'])['sets']):
             if generated is not None and variant.get('masterId')!=colour_master.selection_id(product):
                 excluded.append({'setId':variant['id'],'reason':'generated_gallery_selected_colour_set_not_rebound'})
                 continue

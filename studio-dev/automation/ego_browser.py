@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import uuid
+from browser_space_lock import active_space
 
 ROOT = Path(__file__).resolve().parent
 APPLICATION_ERROR_MARKER = '__JUNFEI_EGO_APPLICATION_ERROR__'
@@ -72,6 +73,11 @@ def application_error(result, binding, script_sha256):
 
 def execute(script=None, timeout=60, resume=False, binding=None, application_job=False):
     config, cli, directory = settings(binding)
+    with active_space(config['task_space_id']):
+        return execute_bound(config, cli, directory, script, timeout, resume, binding, application_job)
+
+
+def execute_bound(config, cli, directory, script, timeout, resume, binding, application_job):
     method = 'takeOverTaskSpace' if resume else 'taskSpace'
     bootstrap = f'globalThis.amazonTask = await {method}({config["task_space_id"]});\n'
     if application_job:

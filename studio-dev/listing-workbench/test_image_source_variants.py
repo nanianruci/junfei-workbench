@@ -41,13 +41,17 @@ class SourceVariants(unittest.TestCase):
   self.url='https://m.media-amazon.com/images/I/test.jpg';self.product['supplierColorReferences'][0]['url']=self.url
   raw=io.BytesIO();Image.new('RGB',(20,16),'black').save(raw,'JPEG')
   with patch('image_provider.remote_reference',return_value=(raw.getvalue(),'image/jpeg'))as fetch,patch.object(engine,'cache',side_effect=lambda image:{'url':self.image(image)}),patch.object(engine,'launch',side_effect=AssertionError('No models')):
+   self.assertIsNone(variants.reviewed_reference_sha(self.product,'black',self.url));fetch.assert_not_called()
    result=self.prepare();self.assertEqual(result,self.prepare());self.assertEqual(fetch.call_count,1)
+   self.assertEqual(variants.reviewed_reference_sha(self.product,'black',self.url),result['source']['sha256'])
+   fetch.assert_called_once()
   self.assertTrue(result['source']['url'].startswith('/uploads/'))
  def test_tampered_or_other_source_cannot_claim_colour_association(self):
   receipt=self.prepare()['association']['receiptId']
   with self.assertRaises(ValueError):variants.freeze(self.product,{'receiptId':receipt},self.image('red'),engine.asset)
   Image.new('RGB',(20,16),'white').save(self.root/self.url.lstrip('/'))
   with self.assertRaises(ValueError):variants.freeze(self.product,{'receiptId':receipt},self.url,engine.asset)
+  with self.assertRaises(ValueError):variants.reviewed_reference_sha(self.product,'black',self.url)
  def test_product_sku_or_account_changes_invalidate_association(self):
   receipt=self.prepare()['association']['receiptId'];other=copy.deepcopy(self.product);other['id']='other'
   with self.assertRaises(ValueError):variants.freeze(other,{'receiptId':receipt},self.url,engine.asset)

@@ -83,13 +83,16 @@ def content_payload(value):
 def check_identity(page, market, seller, account):
     if page.get('url') != POPUP:
         return False
-    text = page['content']
-    if not re.search(r'站点\s+\S+\s+店铺\s+\S+\s+版本号', text):
+    text = ' '.join(page['content'].split())
+    identities = re.findall(r'站点\s+(\S+)\s+店铺\s+(.+?)\s+版本号', text)
+    if not identities:
         return False
-    identity=re.search(r'站点\s+(\S+)\s+店铺\s+(.+?)\s+版本号',text)
-    if identity.group(2) != seller:
+    if len(identities) != 1:
+        raise ValueError('插件显示多个店铺身份；未继续 ERP 操作')
+    country, actual_seller = identities[0]
+    if actual_seller != ' '.join(seller.split()):
         raise ValueError('插件实际店铺与当前任务不符；未继续 ERP 操作')
-    if identity.group(1) != COUNTRIES[market]:
+    if country != COUNTRIES[market]:
         return False
     logged_in = '退出' in text and '请登陆' not in text and '请登录' not in text
     if logged_in and not re.search(r'用户\s+' + re.escape(account) + r'(?=\s|$)', text):

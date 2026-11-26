@@ -10,6 +10,11 @@ import publication_flow as flow
 
 class PublicationFlowTests(unittest.TestCase):
     def setUp(self):
+        policy = {'publishing': {'cross_marketplace_followup': {'enabled': True,
+                    'source_marketplace': 'US', 'target_marketplace': 'UK', 'trigger': 'publishing'}}}
+        config = patch('publication_policy._configuration', return_value=policy)
+        config.start()
+        self.addCleanup(config.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
@@ -43,6 +48,24 @@ class PublicationFlowTests(unittest.TestCase):
         with patch.object(flow, 'source_receipt', return_value=(self.source_job, self.snapshot, self.receipt)), \
                 patch.object(flow.collection, 'finished_snapshot', return_value=self.snapshot):
             return flow.start(2, self.workspace, {'productId': 'P', 'destinationId': 'US', 'confirmed': True})
+
+    def test_single_us_requires_current_confirmation_and_freezes_no_uk_target(self):
+        data = {'productId': 'P', 'destinationId': 'US', 'confirmed': True, 'markets': ['US']}
+        with patch.object(flow, 'source_receipt', return_value=(self.source_job, self.snapshot, self.receipt)), \
+                patch.object(flow.collection, 'finished_snapshot', return_value=self.snapshot), \
+                patch.object(flow.publication_policy, 'default_followup', return_value=None), \
+                patch.object(flow.threading, 'Thread') as thread:
+            preview = flow.preview(2, self.workspace, 'start', data)
+            self.assertEqual(preview['markets'], ['US'])
+            self.assertIsNone(preview['targetStore'])
+            with self.assertRaisesRegex(ValueError, '预检内容'):
+                flow.start(2, self.workspace, data, confirmation='f' * 64)
+            thread.assert_not_called()
+            result = flow.start(2, self.workspace, data, confirmation=preview['digest'])
+            packet = json.loads((flow.ROOT / result['id'] / 'input.json').read_text())['input']
+            self.assertEqual(packet['publicationMarkets'], ['US'])
+            self.assertNotIn('ukTarget', packet)
+            thread.assert_called_once()
 
     def test_settings_owned_preserve_history_and_never_start(self):
         with patch.object(flow.threading, 'Thread') as thread:

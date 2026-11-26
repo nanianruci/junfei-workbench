@@ -19,6 +19,7 @@ class PortableBuildTests(unittest.TestCase):
         self.config = json.loads((build.ROOT / 'packaging/portable-config.json').read_text(encoding='utf-8'))
         (self.root / 'packaging/portable-config.json').write_text(json.dumps(self.config), encoding='utf-8')
         (self.root / 'automation/ego_browser.py').write_text('# fixture', encoding='utf-8')
+        (self.root / 'automation/browser_space_lock.py').write_text('# runtime lock fixture', encoding='utf-8')
         (self.root / 'junfei-publisher/ego_link.py').write_text('# fixture', encoding='utf-8')
         for name in build.MODULES:
             (self.root / 'junfei-publisher' / name).write_text('// fixture', encoding='utf-8')
@@ -57,6 +58,7 @@ class PortableBuildTests(unittest.TestCase):
             self.assertFalse(any('enrollment' in name or name.endswith('.sqlite3') for name in archive.namelist()))
         runtime=self.stage/'portable-runtime'
         self.assertFalse((runtime/'automation/shared_browser_space.py').exists())
+        self.assertTrue((runtime/'automation/browser_space_lock.py').is_file())
         blob=b''.join(p.read_bytes() for p in self.stage.rglob('*') if p.is_file())
         self.assertNotIn(b'PRIVATE-ENROLLMENT',blob)
         self.assertNotIn(b'PRIVATE-COORDINATOR',blob)

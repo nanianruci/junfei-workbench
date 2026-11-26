@@ -16,7 +16,9 @@ def list_sources(product_id):
             if type(result.get('index'))is not int or not result.get('image'):continue
             try:_,digest=engine.asset(result['image'])
             except(ValueError,OSError):continue
-            if result.get('sha256')and result['sha256']!=digest:continue
+            expected = result.get('imageSha256') or result.get('sha256')
+            if expected and expected != digest:
+                continue
             template=shot.get('officialTemplate')or{}
             receipt=result.get('templateExecution')or{}
             is_main=shot.get('apparelKind')=='white' or shot.get('layout')=='main'

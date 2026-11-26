@@ -11,7 +11,7 @@ description: "在钧飞工作台用用户自己的 Codex Tools 制作电商套�
 2. 读工作台所在地的 AGENTS.md；浏览器操作先读并执行可用的 ego-browser 技能，在本目标自己的 TaskSpace 内打开已登录工作台。不要接管其他工作区。
 3. 确认 `/api/image-templates/catalog?kind=layout` 为240项、`kind=repair` 为24项，实际配图可读。按不可变 ID 选择模板；重名编号不是主键。完整原文/配置用 `/api/image-templates/item` 读取，不能换成简化蓝图。原供应商字段只作来源元数据，执行路线由当前账号 Codex Tools 决定。
 4. 默认服装七图为白底主图1、细节图2、种草图3、尺码图1。细节绑定apparelSuite.pointTemplateIds，种草绑定useLifestyleTemplates=true和lifestyleTemplateIds；种草的场景、人物及展示方式不同。所有适用颜色共用有真实数据依据的第7张尺码图。artDirection使用template-led-v1；图种内部自动规划，原模板配图与完整原文实际提交，不能退回简化蓝图。原片锁定仅在明确需要保留原姿态时使用。修图沿原模板及扩写配置；颜色变体可使用generatedColourVariant按母版、真实目标图和原模板执行原质检；本地GPU精确换色是明确选区的独立工具，不能因失败降低验收。
-   原图入口可直接选择商品已关联颜色；GET /api/image-engine/variants列出真实颜色与参考，POST /api/image-engine/prepare-variant-source缓存同色原图并返回关联receiptId，直接选色使用工作台页面或当前登录页调用这些接口，再提交sourceVariant:{receiptId}；不要让重新上传本地文件的包装脚本套用旧receiptId。此关联只记录作图来源，不自动授予SKU配图或发布权限。
+   工作台图片页可选商品已关联的真实颜色。脚本的套图输入可用 `variantSource: {colorKey, reference}` 代替本地 `source`。生成式颜色变体使用本地母版 `source` 和目标色 `variantSource`，由后端准备来源关联。查原请求使用 `GET /api/image-engine/request`，参数为商品和原请求编号。正式交付时逐图选择过检成品并确认图库。
 5. 通过 `scripts/workbench_images.py` 使用当前浏览器登录上传、提交、查询和下载。必须保存持久任务目录；续跑使用同一输入和输出目录。存在任务号时只查询原任务；提交未知时保持原 requestId 和完整原 payload，不另开重复模型任务。无权限、预算不足或配置错误按实际错误处理。
 6. 自动下载最终文件并保存哈希、原始模型输出链接、任务及完整请求回执。对照原图逐张检查结构、流苏、口袋、颜色、文字和约300px缩略效果。接口完成与选区外像素未变不能代替成图验收；报告失败和提醒，不伪造人工通过。正式服装七图的第7张仍使用有来源的真实尺码表。
 

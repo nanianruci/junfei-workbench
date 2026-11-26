@@ -46,7 +46,12 @@ class TemplateExecutionTests(unittest.TestCase):
   with patch.object(engine,'save'),patch.object(engine,'json_model',return_value={'blocking':False,'identityPreserved':True}):
    with self.assertRaisesRegex(ValueError,'模板执行检查'):engine.review(task,result,self.source)
  def test_returned_rich_plan_normalizes_without_changing_geometry_or_copy(self):
-  raw=json.loads((Path(__file__).parents[1]/'returned-plan.json').read_text('utf8'))
+  source_crop={'x':.24,'y':.09,'width':.55,'height':.59}
+  shot={'layout':'detail','sourceIndex':0,'question':'What does the edge look like?',
+        'scene':{'composition':'Show the edge close up'},'camera':'Front detail',
+        'evidence':{'visible':['Visible stitching'],'detailCrops':[{'feature':'stitching','sourceIndex':0,'sourceCrop':source_crop.copy()}]},
+        'copy':['Visible stitching'],'sourceCrop':source_crop}
+  raw={'identity':'Synthetic reference garment','style':{},'shots':[copy.deepcopy(shot) for _ in range(3)]}
   before=copy.deepcopy(raw);result=engine.normalize_shots(copy.deepcopy(raw),3,1,False)
   self.assertEqual(raw,before)
   self.assertEqual(result['shots'][2]['sourceCrop'],[.24,.09,.55,.59])

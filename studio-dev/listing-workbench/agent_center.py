@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -143,12 +144,17 @@ def event(c, task, kind, message, **extra):
 
 
 def recover(c, user):
-    # ACTIVE is protected by LOCK; a dead process never silently resubmits work.
-    for row in c.execute('SELECT body FROM tasks WHERE user_id=?', (user,)).fetchall():
+    from erp_collection import process_alive
+
+    for row in c.execute("""SELECT body FROM tasks WHERE user_id=?
+                          AND json_extract(body,'$.status')='running'""", (user,)).fetchall():
         task = json.loads(row[0])
-        if task['status'] == 'running' and task['id'] not in ACTIVE:
-            task.update(status='needs_review', reason='进程中断，先核对最后工具结果再继续', updated=time.time())
-            put(c, task); event(c, task, 'interrupted', task['reason'])
+        owner_pid = task.get('ownerPid')
+        if task['id'] in ACTIVE or (owner_pid != os.getpid() and process_alive(owner_pid)):
+            continue
+        task.update(status='needs_review', reason='进程中断，先核对最后工具结果再继续', updated=time.time())
+        put(c, task)
+        event(c, task, 'interrupted', task['reason'])
 
 
 def list_tasks(user):
@@ -1171,12 +1177,12 @@ def start(user, tid, *, save_library=False):
     execution_id = uuid.uuid4().hex
     with LOCK:
         with closing(connect()) as c, c:
-            # Claim and validate in one SQLite writer transaction, not only an
-            # in-process lock. Shared-database multi-instance operation is still
-            # unsupported: ACTIVE-based recovery is intentionally conservative.
             c.execute('BEGIN IMMEDIATE')
             recover(c, user)
             task = owned(c, user, tid)
+            if c.execute("""SELECT 1 FROM tasks WHERE user_id=? AND id<>?
+                             AND json_extract(body,'$.status')='running' LIMIT 1""", (user, tid)).fetchone():
+                raise ValueError('当前账号已有任务正在执行，请先完成或暂停原任务')
             discovery_intake.assert_web_available(DATA, user, task.get('productId', ''))
             if save_library:
                 if (task['status'] != 'library_ready' or task.get('libraryDraftOnly') is not True
@@ -1191,7 +1197,7 @@ def start(user, tid, *, save_library=False):
                 raise ValueError('任务不能重复启动；中断或异常请先查看执行记录')
             check_planning_restart(c, task)
             task.update(status='running', pauseRequested=False, updated=time.time(),
-                        reason='', executionId=execution_id)
+                        reason='', executionId=execution_id, ownerPid=os.getpid())
             put(c, task)
             message = ('开始核对正式ERP目标及成品，复用原采集任务；仅保存草稿' if task.get('erpWorkflowVersion')==2 else '已请求保存钧飞产品库草稿' if save_library else
                        '开始执行已接入工具；准备检查不提交ERP')
@@ -1212,14 +1218,15 @@ def start(user, tid, *, save_library=False):
 
 
 def start_queued(user):
-    """Start every queued task once, preserving per-task recovery semantics."""
+    """Start the oldest eligible queued task."""
     owned_by_cli = {row['product_id'] for row in discovery_intake.links(DATA / 'studio.sqlite3', user)}
     queued = [task for task in list_tasks(user)
               if task.get('status') == 'queued' and task.get('productId') not in owned_by_cli]
     started, errors = [], []
-    for task in queued:
+    for task in reversed(queued):
         try:
             started.append(start(user, task['id']))
+            break
         except Exception as exc:
             errors.append({'id': task['id'], 'error': str(exc)[:400]})
     return {'started': started, 'errors': errors, 'count': len(started)}

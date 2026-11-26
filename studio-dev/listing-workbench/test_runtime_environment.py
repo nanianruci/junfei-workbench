@@ -92,6 +92,26 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         (self.project / 'automation/config.json').write_text('[]', encoding='utf-8')
         self.assertFalse(runtime.diagnose(self.app, {})['runtimeFilesReady'])
 
+    def test_offline_backup_preserves_database_and_assets_and_detects_edits(self):
+        from contextlib import closing
+        import sqlite3
+        import workspace_backup
+
+        data = self.root / 'fixture-data'
+        data.mkdir()
+        (data / 'receipt.json').write_text('{"task":"original"}', encoding='utf-8')
+        with closing(sqlite3.connect(data / 'studio.sqlite3')) as db, db:
+            db.execute('CREATE TABLE tasks(id INTEGER PRIMARY KEY)')
+            db.execute('INSERT INTO tasks VALUES (42)')
+        snapshot = self.root / 'snapshot'
+        self.assertEqual(workspace_backup.backup(data, snapshot), 2)
+        self.assertEqual(workspace_backup.verify(snapshot), 2)
+        with closing(sqlite3.connect(snapshot / 'data/studio.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT id FROM tasks').fetchone(), (42,))
+        (snapshot / 'data/receipt.json').write_text('{}', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, '清单'):
+            workspace_backup.verify(snapshot)
+
     def test_override_can_keep_bundled_node_when_path_has_none(self):
         node = self.app / 'node.exe'
         node.write_bytes(b'test fixture, never executed')

@@ -575,7 +575,7 @@ def slot_references(project,index,*,allow_missing_evidence=False):
     return [source,template]
 
 
-def generate(data, *, expected_provider=None):
+def generate(data, *, expected_provider=None, expected_project_digest=None, only_new=False):
     p=get_project(data.get('id'));index=data.get('slot')
     if not p['confirmed'] or type(index) is not int or not 0<=index<len(p['plan']['slots']):
         raise ValueError('请先保存并确认整套分镜，再选择图片用途')
@@ -590,6 +590,13 @@ def generate(data, *, expected_provider=None):
         r['config']['deliveryCanvas']='1464x600'
     with WORKER_LOCK:
         with closing(db()) as c:
+            if expected_project_digest is not None:
+                from listing_jobs import digest
+                if digest(get_project(p['id'])) != expected_project_digest or digest(p) != expected_project_digest:
+                    raise ValueError('分镜已经变化，请核对当前版本')
+            if only_new and c.execute("SELECT 1 FROM runs WHERE project_id=? AND json_extract(body,'$.slot')=?",
+                                      (p['id'], index)).fetchone():
+                raise ValueError('图位已有任务，请先核对原回执')
             runs=c.execute('SELECT runs.body FROM runs JOIN projects ON projects.id=runs.project_id WHERE projects.product_id=?',(p['productId'],))
             if any(json.loads(row[0])['status'] in ('submitting','generating','reviewing','repairing') for row in runs):
                 raise ValueError('当前产品还有图片生成或质检正在进行，请等该图位完成后再生成下一张')

@@ -1,3 +1,4 @@
+import HelpTip from './HelpTip';
 import { useEffect, useRef, useState } from "react";
 import "./image-engine.css";
 import { OfficialTemplates, OfficialColourControls } from "./OfficialTemplates";
@@ -108,6 +109,12 @@ export default function ImageEngine({ productId }: { productId: string }) {
     setError(""); setBusy(true);
     try {
       let payload = request.current;
+      let originalTask: Task | undefined;
+      if (payload) {
+        const query = new URLSearchParams({productId, requestId: String(payload.requestId)});
+        const result = await api('/api/image-engine/request?' + query);
+        originalTask = result.task || undefined;
+      }
       if (!payload) {
         if (!source || !brief.trim()) throw new Error("先上传商品图并填写具体要求");
         let mask: string | undefined; let referenceSource = source;
@@ -150,8 +157,10 @@ export default function ImageEngine({ productId }: { productId: string }) {
           repairTemplateId: mode === "repair" && repairTemplateId ? repairTemplateId : undefined };
         request.current = payload; sessionStorage.setItem(key, JSON.stringify(payload)); setPending(true);
       }
-      const r = await api("/api/image-engine/start", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-      setTasks(old => [r.task, ...old.filter(t => t.id !== r.task.id)]);
+      const task: Task = originalTask || (await api("/api/image-engine/start", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+      })).task;
+      setTasks(old => [task, ...old.filter(item => item.id !== task.id)]);
       request.current = null; sessionStorage.removeItem(key); setPending(false);
     } catch (e) {
       if (e instanceof HttpError && [400, 404].includes(e.status)) { request.current = null; sessionStorage.removeItem(key); setPending(false); }
@@ -163,12 +172,11 @@ export default function ImageEngine({ productId }: { productId: string }) {
   const visibleTasks=showAllHistory?tasks:tasks.filter(task=>task.status==='completed'||!DONE.has(task.status)||['submission_unknown','interrupted'].includes(task.status)).slice(0,8);
   const refreshHistory=()=>{void api(`/api/image-engine/tasks?productId=${encodeURIComponent(productId)}`).then(r=>setTasks(r.tasks)).catch(e=>setError(e.message))};
   return <section className="image-engine">
-    <h3>制作与结果</h3>
-    <p>使用当前账号的 Codex Tools。原模板、真实商品依据、原始输出与检查记录随任务保存。</p>
+    <div className="wb-title-label"><h3>制作与结果</h3><HelpTip label="制作与结果">使用当前账号的 Codex Tools。原模板、真实商品依据、原始输出与检查记录随任务保存。</HelpTip></div>
     <div className="ie-modes" role="group" aria-label="图片创作类型">
       {[["suite", "首色套图"], ["variant", "颜色变体"], ["repair", "智能修图"]].map(([v,title])=><button key={v} aria-pressed={mode===v} disabled={busy||pending||variantBusy} className={mode===v?"selected":""} onClick={()=>changeMode(v)}>{title}</button>)}
     </div>
-    <details className="ie-advanced"><summary>高级像素工具</summary><p>适合明确需要保留选区外原像素的部件换色；模板拼版优先使用颜色变体。</p><button disabled={busy||pending||variantBusy} className={mode==='colour'?'selected':''} onClick={()=>changeMode('colour')}>本地精确选区换色</button></details>
+    <details className="ie-advanced"><summary>高级像素工具</summary><div className="wb-title-label"><button disabled={busy||pending||variantBusy} className={mode==='colour'?'selected':''} onClick={()=>changeMode('colour')}>本地精确选区换色</button><HelpTip label="像素换色">适合需要保留选区外原像素的部件换色。制作模板拼版时使用颜色变体。</HelpTip></div></details>
     {mode==='variant'?<GeneratedColourVariant productId={productId} onBusyChange={setVariantBusy} onSubmitted={refreshHistory}/>:<>
     <div className="ie-workarea">
       <div>
@@ -207,7 +215,7 @@ export default function ImageEngine({ productId }: { productId: string }) {
           <details className="ie-advanced"><summary>高级 · 保留原片姿态</summary><label className="ie-check"><input type="checkbox" checked={preserveSourcePixels} disabled={busy || pending} onChange={e => setPreserveSourcePixels(e.target.checked)} />锁定原片商品与细节</label>
           {preserveSourcePixels && <p>按官方原版式制作背景与排版，商品及细节使用原片图层；保留原拍摄姿态。</p>}
           {preserveSourcePixels && <label className="ie-check"><input type="checkbox" checked={neutralBackground} onChange={e => setNeutralBackground(e.target.checked)} />中和背景偏暖，商品使用原片颜色</label>}
-          </details><p>{apparelConfig ? "图种编排 → 细节与种草原模板 → Codex Tools 生图 → 逐图及整套检查。" : "原模板图文创作 → Codex Tools 生图 → 对照检查。"}</p>
+          </details>
         </>}
         {mode === "repair" && !repairTemplateId && <label>修图任务<select value={editTask} onChange={e => setEditTask(e.target.value)}>
           <option value="background">换背景</option><option value="cleanup">清理干扰物</option><option value="relight">光影调整</option><option value="detail">细节与清晰度</option><option value="free">按要求编辑</option>
@@ -221,9 +229,8 @@ export default function ImageEngine({ productId }: { productId: string }) {
             const file = e.target.files?.[0]; if (!file) return;
             setBusy(true); setError(''); try { setTargetReference(await upload(file)); } catch (error) { setError(String(error)); } finally { setBusy(false); }
           }} /></label>
-          <label>目标色<input type="color" value={target} onChange={e => setTarget(e.target.value)} /><span>{target.toUpperCase()}</span></label>
+          <div className="wb-title-label"><label>目标色<input type="color" value={target} onChange={e => setTarget(e.target.value)} /><span>{target.toUpperCase()}</span></label><HelpTip label="目标色">按真实目标商品取色，本地预览保留选区外像素。</HelpTip></div>
           {targetReference && <p>本次将从参考图的实际衣料取色。</p>}
-          <p>按真实目标商品取色；本地预览保留选区外像素，不用模型重画整件商品。</p>
           <label className="ie-check"><input type="checkbox" checked={polish} onChange={e => setPolish(e.target.checked)} />追加 Codex Tools 局部光影修整</label>
         </>}
         <button className="ie-start" disabled={busy || (!pending && (!source || !brief.trim()))} onClick={() => void submit()}>{busy ? busyLabel : pending ? "沿原请求查询 / 接续" : mode === "colour" && !polish ? "换色并自动检查" : "开始制作"}</button>

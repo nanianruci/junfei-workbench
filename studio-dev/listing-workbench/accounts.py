@@ -2,6 +2,7 @@
 import hashlib
 import os
 import hmac
+import json
 import re
 import secrets
 import sqlite3
@@ -132,6 +133,53 @@ def identify(token, kind='session'):
     with connect() as c:
         row = c.execute('SELECT u.* FROM users u JOIN tokens t ON u.id=t.user_id WHERE t.hash=? AND t.kind=? AND t.expires>? AND u.status=?', (digest(token), kind, time.time(), 'active')).fetchone()
         return public(row) if row else None
+
+def issue_codex(user, product, market, lifetime):
+    kind = 'codex:' + json.dumps([product, market], ensure_ascii=False, separators=(',', ':'))
+    with connect() as c:
+        return issue(c, user, kind, lifetime)
+
+
+def revoke_codex(user, product, market):
+    kind = 'codex:' + json.dumps([product, market], ensure_ascii=False, separators=(',', ':'))
+    with connect() as c:
+        c.execute('DELETE FROM tokens WHERE user_id=? AND kind=?', (user, kind))
+
+
+def identify_codex(token):
+    if not re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
+        return None
+    with connect() as c:
+        row = c.execute("""SELECT u.*, t.kind FROM users u JOIN tokens t ON u.id=t.user_id
+            WHERE t.hash=? AND t.kind LIKE 'codex:%' AND t.expires>? AND u.status='active'""",
+                        (digest(token), time.time())).fetchone()
+    if row is None:
+        return None
+    return public(row), tuple(json.loads(row['kind'][6:]))
+
+
+def confirm_operator(user, password, address):
+    if not isinstance(password, str) or not 12 <= len(password) <= 128:
+        raise ValueError('请输入当前工作台账号密码以确认操作')
+    token, operator = login({'username': user['username'], 'password': password}, address)
+    logout(token)
+    if operator['id'] != user['id']:
+        raise ValueError('登录账号已变化，请重新核对')
+
+def local_confirmation_unset(user):
+    with connect() as c:
+        return c.execute("SELECT 1 FROM users WHERE id=? AND password='!'", (user,)).fetchone() is not None
+
+
+def set_local_confirmation(user, password):
+    if not isinstance(password, str) or not 12 <= len(password) <= 128:
+        raise ValueError('发布确认密码需为12–128位')
+    with connect() as c:
+        changed = c.execute("UPDATE users SET password=? WHERE id=? AND role='admin' AND status='active' AND password='!'",
+                            (password_hash(password), user)).rowcount
+        if changed != 1:
+            raise ValueError('已设置发布确认密码，请使用当前密码')
+
 
 def logout(token):
     with connect() as c:

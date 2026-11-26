@@ -1,3 +1,4 @@
+import HelpTip from './HelpTip';
 import {useEffect,useState,useRef} from 'react';
 import {newCollectionBlocked} from './delivery-readiness';
 
@@ -43,10 +44,10 @@ export default function ErpCollection({productId,accountId,market,copy,online,be
   };
   const safeUrl=job?.draftUrl&&/^https:\/\/www\.junfeikuajing\.com\/#\/amazon\/product\/\d+\?type=draft$/.test(job.draftUrl)?job.draftUrl:undefined;
   return <section className="pe-card" aria-label="成品采集到钧飞ERP">
-    <div className="pe-card-heading"><div><h2>一键采集到钧飞 ERP</h2><p>成品进入采集列表，自动转入所选店铺草稿并重开核对。无需导出或逐款绑定，始终不发布。</p></div></div>
+    <div className="pe-card-heading"><div className="wb-title-label"><h2>一键采集到钧飞 ERP</h2><HelpTip label="ERP 采集">成品进入采集列表，再自动转入所选店铺草稿并重开核对。无需下载或逐款绑定。</HelpTip></div></div>
     {loading?<p role="status">正在读取采集目标与回执…</p>:<>
       <div className="pe-actions"><label>目标店铺 <select aria-label="ERP采集目标店铺" value={selected} onChange={e=>{select(e.target.value);setJob(jobs.find(j=>j.destinationId===e.target.value));}} disabled={busy||running(job)}>
-        {!destinations.length&&<option value="">尚未配置采集目标</option>}{destinations.map(d=><option key={d.id} value={d.id}>{d.name} · {d.marketplace}</option>)}
+        {!destinations.length&&<option value="">尚未配置采集目标</option>}{destinations.map(d=><option key={d.id} value={d.id}>{d.name||d.store||d.id} · {d.marketplace}</option>)}
       </select></label><button id="wbCollectErp" className="pe-primary" disabled={!online||!selected||(!copy.title&&job?.status!=='verified')||busy||running(job)||newCollectionBlocked(deliveryReady,job)} onClick={collect}>
         {busy?'正在读取或提交采集…':running(job)?job!.phase:job?.status==='verified'?'刷新已有采集回执':job?.status==='needs_reconciliation'?'从检查点继续':'一键采集到 ERP'}</button>
         {job?.collectionId&&job.collectionUrl==='https://www.junfeikuajing.com/#/product/collect'&&<a href={job.collectionUrl} target="_blank" rel="noreferrer">打开采集列表 · {job.collectionId}</a>}
@@ -57,7 +58,7 @@ export default function ErpCollection({productId,accountId,market,copy,online,be
       {issues.filter(i=>i.destinationId===selected).map((i,index)=><p role="alert" key={index}>{i.message}</p>)}
       {job&&<div role="status" className="notice"><strong>{job.status==='verified'?(job.nativeJoined?'ERP 原生采集与目标店铺草稿已核对':'采集记录与既有草稿已核对'):job.phase}</strong>
         <p>{job.store}{job.variantCount?` · ${job.variantCount} 个子 SKU`:''}{job.imageCount?` · ${job.imageCount} 张成品图，每色 7 张`:''}</p>
-        {job.stages&&<ol className="pe-erp-stages">{Object.entries({dedupe:'SKU查重',images:'图片上传',collection:'采集列表',native:'原生转入',draft:'草稿保存',verification:'重开核对'}).map(([key,label])=><li key={key} data-state={job.stages?.[key]||'pending'}>{label} · {job.stages?.[key]==='completed'?'完成':job.stages?.[key]==='running'?'处理中':'待执行'}</li>)}</ol>}
+        {job.stages&&Object.keys(job.stages).length>0&&<ol className="pe-erp-stages">{Object.entries({dedupe:'SKU查重',images:'图片上传',collection:'采集列表',native:'原生转入',draft:'草稿保存',verification:'重开核对'}).map(([key,label])=><li key={key} data-state={job.stages?.[key]||'pending'}>{label} · {job.stages?.[key]==='completed'?'完成':job.stages?.[key]==='running'?'处理中':job.status==='verified'&&!job.stages?.[key]?'未记录':'待执行'}</li>)}</ol>}
         {job.status==='verified'&&<p>颜色、尺码及逐 SKU 图片顺序已核对。重复点击复用本条回执，不创建新草稿。</p>}
         {job.status==='verified'&&job.nativeJoined&&<p>ERP 采集列表「加入位置」：亚马逊草稿箱。仅保存草稿，未发布。</p>}
         {job.status==='verified'&&job.handoffMode==='reuse_existing_draft'&&!job.nativeJoined&&<p>本次保留既有草稿；ERP 采集列表的「加入位置」仍为「未加入」，尚未完成 ERP 原生转草稿关联。请勿再次使用「加入到」创建重复草稿。</p>}

@@ -817,12 +817,13 @@ def _capture(user, data, kind, *, lease=None, navigate=False):
             receipt.update(status='blocked', reason='scope_changed_before_capture')
         else:
             timeout = TIMEOUT
-            if navigate:
-                check = discovery_live._check_lease(lease, user, request, kind, phase='before_dispatch')
-                timeout = min(TIMEOUT, max(0.1, check['deadline'] - time.time()))
-                discovery_live._dispatch_started(lease, user, request, kind)
-            dispatched = True
-            completed = subprocess.run([binding['cli'], 'nodejs', '-e', 'await import(' + json.dumps(script_path.resolve().as_uri()) + ')'], cwd=str(directory), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout, check=False, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            with runtime_environment.ego_space(binding['spaceId']):
+                if navigate:
+                    check = discovery_live._check_lease(lease, user, request, kind, phase='before_dispatch')
+                    timeout = min(TIMEOUT, max(0.1, check['deadline'] - time.time()))
+                    discovery_live._dispatch_started(lease, user, request, kind)
+                dispatched = True
+                completed = subprocess.run([binding['cli'], 'nodejs', '-e', 'await import(' + json.dumps(script_path.resolve().as_uri()) + ')'], cwd=str(directory), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout, check=False, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             receipt['runtimeExitCode'] = completed.returncode
             receipt.update(status='execution_unknown', reason='runtime_outcome_unknown')
             if completed.returncode == 0 and result_path.is_file() and result_path.stat().st_size <= (524288 if is_store or is_search or kind == 'family' else 32768):

@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import uuid
 import re
+import runpy
 from urllib.parse import urlsplit
 
 
@@ -42,8 +43,13 @@ def browser_config():
     return json.loads((project_root() / 'automation/config.json').read_text(encoding='utf-8'))['browser']
 
 
-def ego_connection_command():
-    config = browser_config()
+def ego_space(space_id):
+    script = project_root() / 'automation/browser_space_lock.py'
+    return runpy.run_path(str(script))['active_space'](space_id)
+
+
+def ego_connection_command(*, config=None):
+    config = browser_config() if config is None else config
     if config.get('engine') != 'ego-lite':
         raise ValueError('项目专属浏览器必须配置为ego-lite')
     space = config.get('task_space_id')
@@ -86,7 +92,7 @@ def parse_connection_result(result):
     return state
 
 
-def ego_draft_command(request_path, reconciliation_path=None):
+def ego_draft_command(request_path, reconciliation_path=None, *, config=None):
     """Prepare one copy operation; the JS adapter owns field/page validation."""
     request = json.loads(Path(request_path).read_text(encoding='utf-8-sig'))
     if (not isinstance(request, dict) or not isinstance(request.get('patch'), dict)
@@ -99,7 +105,7 @@ def ego_draft_command(request_path, reconciliation_path=None):
     # Identity + intended write, independent of filename/evidence/restarts.
     identity = {key: request.get(key) for key in ('draftId','store','erpSku','patch')}
     digest = hashlib.sha256(json.dumps(identity,ensure_ascii=False,sort_keys=True).encode('utf-8')).hexdigest()
-    config = browser_config()
+    config = browser_config() if config is None else config
     if config.get('engine') != 'ego-lite' or type(config.get('task_space_id')) is not int:
         raise ValueError('缺少已配置的ego专属工作区')
     cli = Path(config['cli'])

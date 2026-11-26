@@ -318,6 +318,14 @@ def _main_image_corrective_save_scope(job, record, source):
 def _observation_scope(job, record, source):
     """Only already-linked US/UK tasks can enter the no-write observation mode."""
     us, uk = record.get('usPublish') or {}, record.get('ukPublish') or {}
+    if source.get('publicationMarkets') == ['US']:
+        if (source.get('accountId') != job['accountId'] or source.get('productId') != job['productId']
+                or source.get('jobId') != job['id'] or record.get('jobId') != job['id']
+                or record.get('accountId') != job['accountId'] or record.get('productId') != job['productId']
+                or not source.get('sha256') or record.get('snapshotSha256') != source['sha256']
+                or not re.fullmatch(r'[1-9]\d*', str(us.get('publishId') or ''))):
+            raise ValueError('美国原发布任务号或冻结身份不符')
+        return
     preparation, copied = record.get('ukPrepare') or {}, record.get('ukCopy') or {}
     prepared = preparation.get('preparedInput') or {}
     if (source.get('accountId') != job['accountId'] or source.get('productId') != job['productId']
@@ -345,7 +353,7 @@ def public(job):
     result = {k: job.get(k) for k in ('id', 'productId', 'productName', 'destinationId', 'sourceCollectionId',
               'sourceStore', 'targetStore', 'parentSku', 'variantCount', 'status', 'phase', 'error',
               'createdAt', 'updatedAt', 'submittedAt', 'usPublishId', 'ukDraftId', 'ukPublishId', 'reused', 'observationOnly',
-              'mediaEpisodeOnly', 'mediaEpisodeObserveOnly', 'ukMediaOnly', 'ukMediaObserveOnly') if k in job}
+              'mediaEpisodeOnly', 'mediaEpisodeObserveOnly', 'ukMediaOnly', 'ukMediaObserveOnly', 'markets') if k in job}
     result.update(observeSupported=True, canObserveLatestReceipts=False,
                   mediaEpisode={'supported': True, 'authorized': False, 'canRetry': False},
                   ukMediaRecovery={'supported': True, 'authorized': False, 'canRetry': False},
@@ -355,6 +363,7 @@ def public(job):
         if not collection.process_alive(job.get('browserPid')) and (job.get('runOwner') != RUNTIME
                 or not collection.process_alive(job.get('ownerPid'))):
             result.update(status='needs_reconciliation', phase='执行中断，从原回执对账继续')
+    scoped_observation = False
     path = ROOT / job['id'] / 'receipt.json'
     if path.is_file():
         try:
@@ -367,6 +376,7 @@ def public(job):
                 try:
                     observation_packet = json.loads((path.parent / 'input.json').read_text(encoding='utf-8'))
                     _observation_scope(job, record, observation_packet['input'])
+                    scoped_observation = True
                     result['canObserveLatestReceipts'] = result.get('status') not in ('queued', 'running')
                 except (ValueError, OSError, KeyError, TypeError):
                     pass
@@ -390,7 +400,7 @@ def public(job):
                     if not isinstance(observation, dict):
                         continue
                     result[station + 'PublicationObservation'] = {field: copy.deepcopy(observation[field]) for field in
-                        ('publishId', 'status', 'failed', 'verification', 'observedAt', 'count', 'childCount') if field in observation}
+                        ('publishId', 'status', 'failed', 'verification', 'observedAt', 'count', 'childCount', 'allChildrenOnline') if field in observation}
                     if observation.get('failed') is True or observation.get('verification') == 'failed':
                         current_failures.append(station)
                         if station == 'us':
@@ -473,8 +483,74 @@ def public(job):
             r'^(?:Error:\s*)?(?:EGO_PAGE_[A-Z0-9_]+\b|page\.(?:click|waitForFunction) timed out\b|ElementResolutionError\b)',
             diagnostic.strip()):
         result['error'] = '浏览器操作未取得完整回执，请核对原记录后继续；不会自动重发'
-    result.update(publishSubmitted=result.get('status') == 'submitted', onlineVerified=False)
+    def online(station):
+        observation = result.get(station + 'PublicationObservation') or {}
+        return (str(observation.get('publishId')) == str(result.get(station + 'PublishId'))
+                and observation.get('verification') == 'accepted' and observation.get('failed') is False
+                and observation.get('status') in ONLINE_STATUSES and observation.get('allChildrenOnline') is True
+                and type(observation.get('childCount')) is int and observation['childCount'] > 0
+                and observation['childCount'] == len(observation_packet['input']['goodsItems']))
+
+    submitted = result.get('status') == 'submitted'
+    verified = submitted and scoped_observation and all(online(m.lower()) for m in job.get('markets', ['US', 'UK']))
+    result.update(publishSubmitted=submitted, onlineVerified=verified)
+    if verified:
+        result['phase'] = '目标站点全部子SKU在售已核验'
     return result
+
+
+ONLINE_STATUSES = {'online', 'active', 'buyable', 'discoverable'}
+
+
+def online_receipt(user, product, market, job_id, publish_id):
+    """Read the existing ERP observation from the account's original task."""
+    if market not in ('US', 'UK') or not re.fullmatch(r'[1-9]\d*', publish_id):
+        raise ValueError('缺少支持站点的原 ERP 发布编号')
+    job = owned(user, job_id)
+    if job['productId'] != product or public(job)['status'] in ('queued', 'running'):
+        raise ValueError('任务不属于当前商品，或该发布任务仍在读取回执')
+    folder = ROOT / job['id']
+    try:
+        record = json.loads((folder / 'receipt.json').read_text(encoding='utf-8'))
+        source = json.loads((folder / 'input.json').read_text(encoding='utf-8'))['input']
+    except (OSError, KeyError, ValueError) as exc:
+        raise ValueError('工作台缺少原发布回读资料') from exc
+    if (any(data.get(key) != value for data in (source, record) for key, value in
+            (('accountId', user), ('productId', product), ('jobId', job_id)))
+            or not source.get('sha256') or record.get('snapshotSha256') != source['sha256']):
+        raise ValueError('工作台原任务冻结身份不符')
+    if market == 'UK':
+        _observation_scope(job, record, source)
+        source = record['ukPrepare']['preparedInput']
+    publication = record.get(market.lower() + 'Publish') or {}
+    observation = publication.get('latestObservation') or {}
+    online = publication.get('onlineObservation') or {}
+    identity = online.get('identity') or {}
+    target = source.get('destination') or {}
+    parent = source.get('goods', {}).get('parentSku')
+    record_id = str(observation.get('recordId') or '')
+    store = source.get('store')
+    if (str(publication.get('publishId')) != publish_id or str(observation.get('publishId')) != publish_id
+            or observation.get('verification') != 'accepted' or observation.get('failed') is not False
+            or observation.get('status') not in ONLINE_STATUSES or observation.get('allChildrenOnline') is not True
+            or not re.fullmatch(r'[1-9]\d*', record_id) or not store or not parent):
+        raise ValueError('原 ERP 发布任务尚无完整在售回执，请只读核对原任务')
+    if (str(online.get('recordId')) != record_id or str(identity.get('publishId')) != record_id
+            or identity.get('accountId') != user or identity.get('productId') != product
+            or identity.get('parentSku') != parent or identity.get('store') != store
+            or any(str(identity.get(key)) != str(target.get(key)) for key in ('marketId', 'countryCode'))
+            or identity.get('countryCode') != ('US' if market == 'US' else 'GB')):
+        raise ValueError('在售回执身份不完整，请只读刷新原工作台任务')
+    expected = {row['sku'] for row in source['goodsItems']}
+    rows = identity.get('children') or []
+    if (not expected or len(rows) != len(expected) or observation.get('childCount') != len(expected)
+            or {row.get('sku') for row in rows} != expected
+            or any(row.get('status') not in ONLINE_STATUSES
+                   or not re.fullmatch(r'[A-Z0-9]{10}', str(row.get('asin') or '')) for row in rows)):
+        raise ValueError('在售回执缺少原子体状态或 ASIN，请只读刷新原工作台任务')
+    return {'workbench_publication_id': job_id, 'publish_id': publish_id, 'online_record_id': record_id,
+            'marketplace': market, 'store': store, 'parent_sku': parent, 'observed_at': observation['observedAt'],
+            'children': [{key: row[key] for key in ('sku', 'asin', 'status')} for row in rows]}
 
 
 def owned(user, jid):
@@ -485,11 +561,14 @@ def owned(user, jid):
     return json.loads(row[0])
 
 
-def persist(job):
+def persist(job, *, handoff=None):
     job['updatedAt'] = time.time()
     with connect() as db, db:
         db.execute('UPDATE jobs SET status=?,body=? WHERE id=? AND account_id=?',
                    (job['status'], json.dumps(job, ensure_ascii=False), job['id'], job['accountId']))
+        if handoff:
+            import codex_handoff
+            codex_handoff.record(db,handoff,job['id'],'observation_queued')
 
 
 def list_jobs(user, pid=''):
@@ -501,25 +580,31 @@ def list_jobs(user, pid=''):
 def view(user, workspace, pid):
     product = collection.product_for(workspace, pid)
     targets = []
+    policy = publication_policy.default_followup('US')
+    pairs_by_id = {pair['sourceDestinationId']: pair for pair in pairs(user)}
     for destination in collection.destinations(user):
         if destination.get('marketplace') != 'US':
             continue
-        pair = next((p for p in pairs(user) if p['sourceDestinationId'] == destination['id']), {})
-        missing = []
+        pair = pairs_by_id.get(destination['id'], {})
+        us_missing = []
+        source = None
         try:
-            job, source, _ = source_receipt(user, pid, destination['id'])
+            _, source, _ = source_receipt(user, pid, destination['id'])
         except ValueError as error:
-            job = None
-            missing.append(str(error))
-        if job:
+            us_missing.append(str(error))
+        try:
+            us_missing.extend(publication_inputs.us_publication_missing_facts(publication_inputs.publication_facts(product)))
+        except ValueError as error:
+            us_missing.append(str(error))
+        missing = list(us_missing)
+        if not policy:
+            missing.append('默认跨站发布规则未启用')
+        if source is not None:
             missing.extend(publication_inputs.uk_publication_requirements(source, product, pair)['missing'])
-        try:
-            missing.extend(publication_inputs.us_publication_missing_facts(publication_inputs.publication_facts(product)))
-        except ValueError as error:
-            missing.append(str(error))
         targets.append({'id': destination['id'], 'store': destination['store'], 'target': pair,
-                        'sourceReady': bool(job), 'ready': not missing, 'missing': missing})
-    return {'targets': targets, 'jobs': list_jobs(user, pid), 'policy': publication_policy.default_followup('US'),
+                        'sourceReady': source is not None, 'ready': not missing, 'missing': missing,
+                        'usReady': not us_missing, 'usMissing': us_missing})
+    return {'targets': targets, 'jobs': list_jobs(user, pid), 'policy': policy,
             'commerce': copy.deepcopy(product.get('erpDelivery', {}).get('UK', {})),
             'skuCount': len(collection.eligible_variant_rows(product))}
 
@@ -549,50 +634,117 @@ def update_commerce(workspace, data):
     product.setdefault('erpDelivery', {})['UK'] = copy.deepcopy(details)
 
 
-def start(user, workspace, data):
-    if not isinstance(data, dict) or set(data) - {'productId', 'destinationId', 'confirmed'} or data.get('confirmed') is not True:
+def _start_scope(user, workspace, data):
+    if not isinstance(data, dict) or set(data) - {'productId', 'destinationId', 'confirmed', 'markets'} or data.get('confirmed') is not True:
         raise ValueError('请明确选择“发布美国并接续英国”，草稿采集不授权发布')
-    if not publication_policy.default_followup('US'):
+    markets = data.get('markets', ['US', 'UK'])
+    if markets not in (['US'], ['US', 'UK']):
+        raise ValueError('请选择美国，或美国接续英国')
+    policy = publication_policy.default_followup('US') if markets == ['US', 'UK'] else None
+    if markets == ['US', 'UK'] and not policy:
         raise ValueError('默认跨站发布规则未启用')
     product = collection.product_for(workspace, data.get('productId'))
     ds = [d for d in collection.destinations(user) if d['id'] == data.get('destinationId') and d.get('marketplace') == 'US']
     if len(ds) != 1:
         raise ValueError('请选择本账号美国ERP目标')
+    return product, ds[0], markets, policy
+
+
+def _start_preview(user, workspace, product, destination, markets):
+    pair = next((p for p in pairs(user) if p['sourceDestinationId'] == destination['id']), {})
+    source_job, source, receipt = source_receipt(user, product['id'], destination['id'])
+    with tempfile.TemporaryDirectory(prefix='junfei-publication-check-') as tmp:
+        fresh = collection.finished_snapshot(user, product, workspace.get('copy', {}).get(product['id'] + '-US', {}),
+                                            destination, Path(tmp), source)
+    if collection_inputs.content_digest(fresh) != collection_inputs.content_digest(source):
+        raise ValueError('当前成品与美国原草稿不同，请先核对更新原采集记录')
+    commerce = publication_inputs.uk_publication_inputs(source, product, pair) if 'UK' in markets else {}
+    facts = publication_inputs.publication_facts(product)
+    missing_facts = publication_inputs.us_publication_missing_facts(facts)
+    if missing_facts:
+        raise ValueError('，'.join(missing_facts))
+    frozen = copy.deepcopy(source)
+    frozen['destination'].update(receipt.get('resolvedDestination', {}), draftId=receipt['draftId'],
+                                 destinationId=destination['id'], erpAccountId=source['destination']['erpUserId'])
+    frozen['urls'] = {k: (v.get('url') if isinstance(v, dict) else v) for k, v in receipt.get('uploads', {}).items()}
+    import store_rotation
+    rotation = store_rotation.publication_scope(user, product['id'], destination['id'], markets)
+    frozen.update(commerce, publicationMarkets=markets)
+    if rotation:
+        frozen['rotation'] = rotation
+    frozen['publicationFacts'] = facts
+    details = {'productId': product['id'], 'productName': product.get('name'),
+               'sourceStore': source['store'], 'targetStore': pair['storeName'] if 'UK' in markets else None,
+               'markets': markets,
+               'destinationId': destination['id'], 'collectionId': source_job['id'],
+               'draftId': receipt['draftId'], 'parentSku': source['goods']['parentSku'],
+               'variantCount': len(source['goodsItems'])}
+    return details, frozen
+
+
+def _confirmation_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                     separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+def _resume_preview(owner, job, data):
+    folder = ROOT / job['id']
+    sources = {}
+    for name in ('input.json', 'receipt.json'):
+        path = folder / name
+        if path.is_file():
+            sources[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    details = {key: job.get(key) for key in ('id', 'productId', 'productName', 'sourceStore', 'targetStore',
+                                             'destinationId', 'parentSku', 'variantCount', 'phase', 'markets')}
+    return {**details, 'digest': _confirmation_digest([owner, 'continue', job, data, sources])}
+
+
+def preview(owner, workspace, action, data):
+    with LOCK:
+        if action == 'start':
+            product, destination, markets, policy = _start_scope(owner, workspace, data)
+            details, frozen = _start_preview(owner, workspace, product, destination, markets)
+            return {**details, 'digest': _confirmation_digest([owner, action, details, frozen, destination, policy])}
+        if action == 'continue' and isinstance(data, dict) and data.get('id') and 'observeOnly' not in data:
+            job = owned(owner, data['id'])
+            return _resume_preview(owner, job, data)
+    raise ValueError('请选择正式发布或修复操作')
+
+
+def observe(user, job_id, *, handoff=None):
+    return resume(user, {'id': job_id, 'confirmed': True, 'observeOnly': True}, handoff=handoff)
+
+
+def start(user, workspace, data, *, confirmation=None):
+    product, destination, markets, policy = _start_scope(user, workspace, data)
     with LOCK, connect() as db, db:
         db.execute('BEGIN IMMEDIATE')
         prior = db.execute('SELECT body FROM jobs WHERE account_id=? AND product_id=? AND destination_id=?',
-                           (user, product['id'], ds[0]['id'])).fetchone()
+                           (user, product['id'], destination['id'])).fetchone()
         if prior:
-            return {**public(json.loads(prior[0])), 'reused': True}
-        pair = next((p for p in pairs(user) if p['sourceDestinationId'] == ds[0]['id']), {})
-        source_job, source, receipt = source_receipt(user, product['id'], ds[0]['id'])
-        with tempfile.TemporaryDirectory(prefix='junfei-publication-check-') as tmp:
-            fresh = collection.finished_snapshot(user, product, workspace.get('copy', {}).get(product['id'] + '-US', {}),
-                                                ds[0], Path(tmp), source)
-        if collection_inputs.content_digest(fresh) != collection_inputs.content_digest(source):
-            raise ValueError('当前成品与美国原草稿不同，请先核对更新原采集记录')
-        commerce = publication_inputs.uk_publication_inputs(source, product, pair)
-        facts = publication_inputs.publication_facts(product)
-        missing_facts = publication_inputs.us_publication_missing_facts(facts)
-        if missing_facts:
-            raise ValueError('，'.join(missing_facts))
-        job = {'id': uuid.uuid4().hex, 'accountId': user, 'productId': product['id'], 'productName': product.get('name', ''),
-               'destinationId': ds[0]['id'], 'sourceCollectionId': source_job['id'], 'sourceStore': source['store'],
-               'targetStore': pair['storeName'], 'parentSku': source['goods']['parentSku'], 'variantCount': len(source['goodsItems']),
-               'status': 'queued', 'phase': '等待美国发布与英国接续', 'createdAt': time.time(),
-               'runOwner': RUNTIME, 'ownerPid': os.getpid(), 'policy': publication_policy.default_followup('US')}
-        frozen = copy.deepcopy(source)
-        frozen['destination'].update(receipt.get('resolvedDestination', {}), draftId=receipt['draftId'],
-                                     destinationId=ds[0]['id'], erpAccountId=source['destination']['erpUserId'])
-        frozen['urls'] = {k: (v.get('url') if isinstance(v, dict) else v) for k, v in receipt.get('uploads', {}).items()}
-        frozen.update(commerce)
-        frozen['publicationFacts'] = facts
-        frozen['runtime'] = {'pythonExecutable': sys.executable}
+            old_job = json.loads(prior[0])
+            if old_job.get('markets', ['US', 'UK']) != markets:
+                raise ValueError('原发布任务的站点范围已冻结，请核对原任务')
+            return {**public(old_job), 'reused': True}
+        details, frozen = _start_preview(user, workspace, product, destination, markets)
+        if confirmation is not None and confirmation != _confirmation_digest([user, 'start', details, frozen, destination, policy]):
+            raise ValueError('发布预检内容已变化，请重新核对')
+        job = {'id': uuid.uuid4().hex, 'accountId': user, 'productId': product['id'],
+               'productName': details['productName'], 'destinationId': destination['id'],
+               'sourceCollectionId': details['collectionId'], 'sourceStore': details['sourceStore'],
+               'targetStore': details['targetStore'], 'parentSku': details['parentSku'],
+               'variantCount': details['variantCount'], 'status': 'queued',
+               'phase': '等待发布美国' if markets == ['US'] else '等待美国发布与英国接续',
+               'createdAt': time.time(), 'runOwner': RUNTIME, 'ownerPid': os.getpid(),
+               'policy': policy, 'markets': markets}
+        if confirmation is not None:
+            job['operatorConfirmation'] = {'accountId': user, 'at': time.time(), 'digest': confirmation}
+        frozen['runtime'] = {'pythonExecutable': sys.executable,'bundledValidator':bool(getattr(sys,'frozen',False))}
         frozen['jobId'] = job['id']
         # This exists before a worker is launched; it is never regenerated on resume.
-        write_json(ROOT / job['id'] / 'input.json', {'input': frozen, 'connection': ds[0]})
+        write_json(ROOT / job['id'] / 'input.json', {'input': frozen, 'connection': destination})
         db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?)',
-                   (job['id'], user, product['id'], ds[0]['id'], job['status'], json.dumps(job, ensure_ascii=False)))
+                   (job['id'], user, product['id'], destination['id'], job['status'], json.dumps(job, ensure_ascii=False)))
         ACTIVE.add(job['id'])
     threading.Thread(target=execute, args=(job,), daemon=True).start()
     return public(job)
@@ -716,7 +868,7 @@ def _append_us_sleeve_type(user, job, folder, packet, evidence):
     job.setdefault('amendments', []).append({'id': amendment_id, 'kind': 'us_sleeve_type', 'evidence': fact})
 
 
-def resume(user, data):
+def resume(user, data, *, confirmation=None, handoff=None):
     if isinstance(data, dict) and 'ukCoatWeave' in data:
         if set(data) != {'id', 'confirmed', 'ukCoatWeave'} or data['confirmed'] is not True:
             raise ValueError('英国外套经营默认须单独沿原任务补充')
@@ -784,6 +936,11 @@ def resume(user, data):
         job = owned(user, data.get('id'))
         if public(job)['status'] in ('queued', 'running'):
             return {**public(job), 'reused': True}
+        if confirmation is not None:
+            if confirmation != _resume_preview(user, job, data)['digest']:
+                raise ValueError('原发布回执已变化，请重新核对')
+            job.setdefault('operatorContinuations', []).append(
+                {'accountId': user, 'at': time.time(), 'digest': confirmation})
         folder = ROOT / job['id']
         continuation_packet = json.loads((folder / 'input.json').read_text(encoding='utf-8'))
         continuation_source = continuation_packet['input']
@@ -1135,7 +1292,10 @@ def resume(user, data):
             job.setdefault('amendments', []).append({'id': amendment_id, 'kind': 'uk_category_path', 'path': path.strip(), 'evidence': evidence.strip()})
         job.setdefault('history', []).append({'error': job.pop('error', None), 'resumedAt': time.time()})
         job.update(status='queued', phase=('核对两站最新回执（只读）' if job.get('observationOnly') else '从原发布检查点核对'), runOwner=RUNTIME, ownerPid=os.getpid())
-        persist(job)
+        if handoff:
+            persist(job, handoff=handoff)
+        else:
+            persist(job)
         ACTIVE.add(job['id'])
     threading.Thread(target=execute, args=(job,), daemon=True).start()
     return public(job)
@@ -1237,7 +1397,8 @@ def validate_submitted(record, input):
     if (record.get('accountId') != input['accountId'] or record.get('productId') != input['productId']
             or record.get('snapshotSha256') != input['sha256']):
         raise ValueError('发布回执与当前账号产品快照不同')
-    for key in ('usPublish', 'ukPublish'):
+    markets = input.get('publicationMarkets', ['US', 'UK'])
+    for key in (market.lower() + 'Publish' for market in markets):
         r = record.get(key, {})
         if (r.get('phase') != 'publishing_verified' or r.get('status') not in ('accepted', 'publishing')
                 or not re.fullmatch(r'[1-9]\d*', str(r.get('publishId', '')))):
@@ -1255,14 +1416,43 @@ def validate_submitted(record, input):
         expected_children = {v['sku']: (v['color'], v['size']) for v in input['goodsItems']}
         if any(expected_children.get(v['sku']) != (v.get('color'), v.get('size')) for v in identity['children']):
             raise ValueError('发布结果SKU与原颜色尺码对应不一致')
-    if not record.get('ukCopy', {}).get('draftId') or record.get('ukPrepare', {}).get('phase') != 'uk_draft_verified':
+    if 'UK' in markets and (not record.get('ukCopy', {}).get('draftId') or record.get('ukPrepare', {}).get('phase') != 'uk_draft_verified'):
         raise ValueError('英国复制与草稿核对回执未齐全')
+
+
+def rotation_receipt(owner, job_id, product, markets, scope):
+    """Return exact accepted task IDs bound to this assignment and store."""
+    job = owned(owner, job_id)
+    target = scope['target']
+    if (job['productId'] != product or job.get('markets', ['US', 'UK']) != markets
+            or job['destinationId'] != target['destinationId'] or public(job)['status'] != 'submitted'):
+        raise ValueError('原发布任务未受理或与当前轮转商品及目标不符')
+    folder = ROOT / job_id
+    try:
+        source = json.loads((folder / 'input.json').read_text(encoding='utf-8'))['input']
+        record = json.loads((folder / 'receipt.json').read_text(encoding='utf-8'))
+    except (OSError, KeyError, ValueError) as error:
+        raise ValueError('尚未取得原任务冻结输入及发布回执') from error
+    if (source.get('jobId') != job_id or record.get('jobId') != job_id or source.get('rotation') != scope
+            or source.get('publicationMarkets') != markets or source.get('store') != target['store']
+            or ('UK' in markets and source.get('ukTarget', {}).get('id') != target['ukDestinationId'])):
+        raise ValueError('发布回执与当前轮转位置的快照不同')
+    validate_submitted(record, source)
+    ids = {}
+    for market in markets:
+        receipt = record[market.lower() + 'Publish']
+        latest = receipt.get('latestObservation') or {}
+        if latest and (latest.get('failed') is True or latest.get('verification') == 'failed'):
+            raise ValueError('原发布任务的最新回执显示失败，暂不计数')
+        ids[market] = str(receipt['publishId'])
+    return {'publicationId': job_id, 'publishIds': ids, 'countedAt': time.time()}
 
 
 def execute(job):
     try:
         packet = json.loads((ROOT / job['id'] / 'input.json').read_text(encoding='utf-8'))
         source, connection = packet['input'], packet['connection']
+        single_us = source.get('publicationMarkets') == ['US']
         job.update(status='running', phase='等待专属ERP浏览器')
         persist(job)
         with collection.browser_lease(connection['browserBinding']):
@@ -1309,17 +1499,21 @@ def execute(job):
                 return
             if job.get('observationOnly'):
                 _observation_scope(job, record, source)
-                job['phase'] = '只读核对美国和英国原发布任务最新回执'
+                job['phase'] = '只读核对目标站点原发布任务最新回执'
                 persist(job)
                 record = run_browser(job, connection, 'observe')
+                publications = [record.get('usPublish') or {}]
+                if not single_us:
+                    publications.append(record.get('ukPublish') or {})
                 if any((publication.get('latestObservation') or {}).get('verification') != 'accepted'
                        or (publication.get('latestObservation') or {}).get('failed') is not False
-                       for publication in (record.get('usPublish') or {}, record.get('ukPublish') or {})):
+                       for publication in publications):
                     raise ValueError('两站尚未取得最新成功核对回执，保留只读观察模式')
                 validate_submitted(record, source)
-                job.update(status='submitted', phase='两站最新发布回执已核对，尚未核实亚马逊在售',
-                           usPublishId=record['usPublish']['publishId'], ukDraftId=record['ukCopy']['draftId'],
-                           ukPublishId=record['ukPublish']['publishId'])
+                job.update(status='submitted', phase='目标站点最新发布回执已核对',
+                           usPublishId=record['usPublish']['publishId'])
+                if not single_us:
+                    job.update(ukDraftId=record['ukCopy']['draftId'], ukPublishId=record['ukPublish']['publishId'])
                 return
             us = record.get('usPublish') or {}
             reconcile_us = any(us.get(key) for key in ('publishId', 'intent', 'observedCandidate'))
@@ -1354,6 +1548,11 @@ def execute(job):
                                         and not verified_online)))
                     or not publication_policy.ready_for_copy({'sourceMarketplace': 'US', **us})):
                 raise ValueError('美国尚未取得可接续的真实发布中回执')
+            if single_us:
+                validate_submitted(record, source)
+                job.update(status='submitted', phase='美国已受理，待核实亚马逊在售',
+                           usPublishId=us['publishId'], submittedAt=time.time())
+                return
             job.update(usPublishId=us.get('publishId'), phase='核对英国登录、复制、原SKU及经营资料后发布')
             persist(job)
             login(job, connection, 'UK')

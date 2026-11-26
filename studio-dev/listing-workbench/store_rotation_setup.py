@@ -71,7 +71,7 @@ def normalize(data):
 def instruction(setup):
     lines=[f"读取当前工作台账号{setup['accountId']}的店铺轮转配置{setup['id']}（版本{setup['revision']}）。",
            f"读取入口：GET /api/agent/rotation-setup?setupId={setup['id']}",
-           '先读取总工作流、原任务和当前暂停/运行状态，核对实际紫鸟及ERP身份后再安排执行。',
+           '从任务中心读取轮转检查点与原暂停状态；核对紫鸟及ERP身份，正式发布单独确认。',
            '按以下顺序轮转，每店每轮3款新商品，所有配置目标站点真实发布中才计入一款；失败或未知沿原ID对账。']
     for index,row in enumerate(setup['targets'],1):
         lines.append(f"{index}. 紫鸟：{row['ziniaoStoreName']}；ERP账号：{row['erpAccount']}；美国店铺：{row['usStoreName']}"+

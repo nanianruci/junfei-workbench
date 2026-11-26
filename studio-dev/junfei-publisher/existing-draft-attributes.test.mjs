@@ -1,6 +1,5 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import {chromium} from 'playwright';
 import {validateRequest,applyPatch} from './existing-draft.mjs';
 
@@ -13,17 +12,20 @@ test('属性修改必须有逐字段依据，不接受无效尺寸或任意属�
   validateRequest({...base,patch:{material:''},evidence:{material:'供应商参数和图片冲突，清空待核实'}});
 });
 
-test('真实ERP属性DOM：选择、清空、尺寸单位及重复字段拒绝',async()=>{
+test('ERP属性DOM模拟：选择、清空、尺寸单位及重复字段拒绝',async()=>{
   const browser=await chromium.launch({channel:'msedge',headless:true});
   try {
     const page=await browser.newPage();
     await page.route('**/*',r=>r.abort());
-    const observed=await Promise.all(['color','material'].map(async name=>{
-      const r=JSON.parse(await fs.readFile(new URL(`../automation/data/junfei-${name}-context-20261102.json`,import.meta.url),'utf8'));
-      return r.value.parents.at(-1);
-    }));
-    await page.setContent(observed.join('')+`<div class="el-form-item"><label><span class="normal">Width Unit</span></label><input value="英寸(Inches)"></div><div class="el-form-item"><label><span class="normal">Width shorter horizontal edge</span></label><input value="4.73"></div>`);
-    // Event handling substitutes Vue only; selectors run against the observed HTML.
+    const item = (label, value, options = []) => '<div class="el-form-item"><label><span class="normal">'+label+
+      '</span></label><div class="el-select"><input value="'+value+'">'+(options.length?
+      '<ul class="el-select-dropdown" style="display:none">'+options.map(option=>'<li><span>'+option+'</span></li>').join('')+'</ul>':'')+'</div></div>';
+    await page.setContent([
+      item('Color','黑色(Black)',['白色(White)','黑色(Black)']),
+      item('Material Type','棉(Cotton)',['乙烯-醋酸乙烯酯(Ethylene Vinyl Acetate)']),
+      item('Width Unit','英寸(Inches)'),
+      item('Width shorter horizontal edge','4.73'),
+    ].join(''));
     await page.evaluate(()=>{
       for(const row of document.querySelectorAll('.el-form-item')) {
         const input=row.querySelector('input'),dropdown=row.querySelector('.el-select-dropdown');

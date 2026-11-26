@@ -7,7 +7,8 @@ class ColourVariantContract(unittest.TestCase):
           'prompt':'Full original template hierarchy and photographs.','promptSha256':hashlib.sha256(b'Full original template hierarchy and photographs.').hexdigest()}
         self.parent={'id':'parent','status':'completed','productId':'product','results':[{'index':0,'image':'original',
           'review':{'blocking':False,'identityPreserved':True},'shot':{'apparelKind':'seller','copy':['PALE PINK JACKET','Plain stitched cuff'],'officialTemplate':self.template}}]}
-        self.recipe={'mode':'repair','references':['source','target'],'referenceSha256':['source-sha','target-sha'],'brief':'Only requested colour variant','editTask':'free'}
+        self.recipe={'mode':'repair','references':['source','target'],'referenceSha256':['source-sha','target-sha'],'brief':'Only requested colour variant','editTask':'free',
+                     'sourceVariant':{'color':'Off White','children':[{'sku':'WHITE-S','size':'S'}]}}
         self.config={'sourceTaskId':'parent','sourceResultIndex':0,'targetColour':'Off White'}
     def frozen(self):
         return freeze(self.config,self.recipe,'product',lambda _:self.parent,lambda _: (None,'source-sha'),lambda _:copy.deepcopy(self.template))
@@ -27,6 +28,10 @@ class ColourVariantContract(unittest.TestCase):
     def test_account_product_boundary(self):
         self.parent['productId']='another-product'
         with self.assertRaises(ValueError):self.frozen()
+    def test_target_colour_must_match_frozen_variant(self):
+        self.recipe['sourceVariant']['color']='Black'
+        with self.assertRaisesRegex(ValueError,'真实颜色'):
+            self.frozen()
     def test_changed_source_bytes(self):
         self.recipe['referenceSha256'][0]='changed'
         with self.assertRaises(ValueError):self.frozen()
@@ -89,8 +94,9 @@ class VariantEngineIntegration(unittest.TestCase):
     def start(self):
         import official_image_templates as lib
         data={'mode':'repair','requestId':self.uuid.uuid4().hex,'references':[self.source,self.target],'brief':'Exact Black colour variant','noText':False,
+          'sourceVariant':{'receiptId':'a'*64},
           'generatedColourVariant':{'sourceTaskId':self.parent['id'],'sourceResultIndex':0,'targetColour':'Black'}}
-        with self.patch.object(self.e,'require_codex'),self.patch.object(self.e,'launch'),self.patch.object(lib,'bind',return_value=self.template),self.patch('provider.text_settings',return_value={}):
+        with self.patch.object(self.e,'require_codex'),self.patch.object(self.e,'launch'),self.patch.object(lib,'bind',return_value=self.template),self.patch('provider.text_settings',return_value={}),self.patch('image_source_variants.freeze',return_value={'color':'Black','children':[{'sku':'BLACK-S','size':'S'}]}):
             return self.e.start(data,{'id':'p','name':'jacket'})
     def verdict(self,passed=True):
         return {**{k:True for k in REQUIRED+('templateFollowed',)},'blocking':not passed,'issues':[]if passed else['missed inset'],'warnings':[],

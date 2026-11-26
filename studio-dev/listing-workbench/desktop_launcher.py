@@ -10,6 +10,7 @@ from urllib.request import urlopen
 
 BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 import portable_support
+from runtime_environment import workbench_port
 if portable_support.handle_cli(BASE):
     raise SystemExit(0)
 PORTABLE = portable_support.configure(BASE)
@@ -27,9 +28,7 @@ if '--account-runtime' in sys.argv:
     import account_runtime
     raise SystemExit(0)
 
-PORT = int(os.environ.get('JUNFEI_PORT', '18765'))
-if not 1024 <= PORT <= 65535:
-    raise SystemExit('JUNFEI_PORT must be between 1024 and 65535')
+PORT = workbench_port()
 URL = f'http://127.0.0.1:{PORT}'
 OPEN_BROWSER = os.environ.get('JUNFEI_OPEN_BROWSER', '1') != '0'
 def ready():

@@ -114,5 +114,6 @@ class EgoRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode,1)
         failure=ego_browser.application_error(result,'app',__import__('hashlib').sha256(self.script.read_bytes()).hexdigest())
         self.assertEqual(failure['message'],'专属采集浏览器连接已变化，请重新连接')
-        self.assertIn(next(self.scripts.glob('round-*.mjs')).as_uri(),failure['stack'])
+        from urllib.parse import unquote
+        self.assertIn(unquote(next(self.scripts.glob('round-*.mjs')).as_uri()), unquote(failure['stack']))
         self.assertNotIn('business should not run',failure['message'])

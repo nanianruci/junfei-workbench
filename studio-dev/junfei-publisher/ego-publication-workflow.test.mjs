@@ -200,3 +200,22 @@ test('observation reports partial evidence by station and still reads the other 
  assert.deepEqual(events,['US','GB']);assert.equal(saved.at(-1).usPublish.onlineReadback.publishId,'11');
  assert.equal(saved.at(-1).ukPublish.latestObservation.failed,true);assert.equal(saved.at(-1).allOnline,false);
 });
+
+test('US-only jobs never copy to UK and can observe their original US task separately',async()=>{
+ const i={...input(),publicationMarkets:['US']},r={},events=[],a=adapters(events);
+ a.copy=async()=>assert.fail('single-market job must not copy');
+ a.prepareUk=async()=>assert.fail('single-market job must not prepare a UK draft');
+ a.observe=async(_p,prepared,publication,save)=>{
+  assert.equal(prepared.destination.countryCode,'US');
+  assert.equal(publication.publishId,'11');
+  publication.latestObservation={allChildrenOnline:true,verification:'accepted'};
+  events.push('observe-US');await save();
+ };
+ await runPublicationWorkflow({},i,r,async()=>{},{phase:'us',adapters:a});
+ assert.deepEqual(events,['publish-US']);
+ assert.equal(r.phase,'us_submitted');
+ await assert.rejects(runPublicationWorkflow({},i,r,async()=>{},{phase:'uk',adapters:a}),/仅美国/);
+ await runPublicationWorkflow({},i,r,async()=>{},{phase:'observe',adapters:a});
+ assert.deepEqual(events,['publish-US','observe-US']);
+ assert.equal(r.allOnline,true);
+});

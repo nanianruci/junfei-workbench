@@ -8,6 +8,8 @@ import {recoverNativeMediaPublication} from './ego-publication-recovery.mjs';
 
 export async function runPublicationWorkflow(page,input,record,persist,{phase='all',adapters={},mediaEpisodeObserveOnly=false,ukMediaObserveOnly=false}={}){
  if(!['us','uk','all','observe','uk_required_attributes','us_media_episode','uk_identifiers','uk_media_recovery'].includes(phase))throw Error('发布阶段无效');
+ const usOnly=input.publicationMarkets?.length===1&&input.publicationMarkets[0]==='US';
+ if(usOnly&&!['us','observe','us_media_episode'].includes(phase))throw Error('仅美国发布任务不能执行跨站发布或恢复');
  const expected={accountId:input.accountId,productId:input.productId,snapshotSha256:input.sha256};
  for(const [key,value]of Object.entries(expected)){
   if(!value||(record[key]!==undefined&&record[key]!==value))throw Error('发布流程回执不属于本账号产品快照');record[key]=value;
@@ -78,6 +80,17 @@ export async function runPublicationWorkflow(page,input,record,persist,{phase='a
   if(record.usPrepare?.preparedInput)assertUsPreparedIdentity(input,record.usPrepare.preparedInput);
   // A completed job can acquire later Amazon errors. An explicit observation
   // reads the two original IDs, without login, preparation, copy or recovery.
+  if (usOnly && phase === 'observe') {
+    if (!/^[1-9]\d*$/.test(String(record.usPublish.publishId || ''))) throw Error('缺少原美国发布任务号');
+    const prepared = record.usPrepare?.preparedInput;
+    if (prepared) assertUsPreparedIdentity(input, prepared);
+    await api.observe(page, prepared || input, record.usPublish, save, adapters.publishAdapters);
+    record.phase = 'us_submitted';
+    record.allOnline = record.usPublish.latestObservation?.allChildrenOnline === true;
+    delete record.error;
+    await save();
+    return record;
+  }
   if(phase==='observe'){
    const uk=record.ukPrepare,prepared=uk?.preparedInput;
    if(!/^[1-9]\d*$/.test(String(record.usPublish.publishId||''))||
@@ -126,7 +139,7 @@ export async function runPublicationWorkflow(page,input,record,persist,{phase='a
    }
    await api.publish(page,record.usPrepare?.preparedInput||input,record.usPublish,save,adapters.publishAdapters);
    if(!record.usPublish.publishId||record.usPublish.phase!=='publishing_verified')throw Error('美国发布任务尚未明确受理');
-   record.phase='awaiting_uk_session';await save();
+   record.phase=usOnly?'us_submitted':'awaiting_uk_session';await save();
    if(phase==='us')return record;
   }
   if(!record.usPublish.publishId||record.usPublish.phase!=='publishing_verified')throw Error('缺少原美国真实发布中回执，不创建英国草稿');

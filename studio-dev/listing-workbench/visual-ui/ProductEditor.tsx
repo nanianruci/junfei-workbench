@@ -1,3 +1,4 @@
+import HelpTip from './HelpTip';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import AboutOpenSource from './AboutOpenSource';
 import { createRoot, type Root } from 'react-dom/client';
@@ -9,6 +10,8 @@ import type {KeywordMetric} from './keyword-marks';
 import './product-editor.css';
 import ErpCollection from './ErpCollection';
 import PublicationFlow from './PublicationFlow';
+import CodexOperations from './CodexOperations';
+import EngineDelivery from './EngineDelivery';
 import {colourDeliveryProgress,masterDeliveryProgress,type DeliveryColours,type SelectedGalleryReadiness} from './delivery-readiness';
 
 const steps = [
@@ -71,8 +74,8 @@ function Tools({ editor, kind }: {editor:Editor;kind:'research'|'visual'|'delive
   </section>}</>;
 }
 
-function Section({ title, hint, actions, children }: {title:string;hint?:string;actions?:React.ReactNode;children?:React.ReactNode}) {
-  return <section className="pe-card"><div className="pe-card-heading"><div><h2>{title}</h2>{hint&&<p>{hint}</p>}</div>
+function Section({ title, hint, actions, children }: {title:string;hint?:React.ReactNode;actions?:React.ReactNode;children?:React.ReactNode}) {
+  return <section className="pe-card"><div className="pe-card-heading"><div className="wb-title-label"><h2>{title}</h2>{hint&&<HelpTip label={title}>{hint}</HelpTip>}</div>
     {actions&&<div className="pe-actions">{actions}</div>}</div>{children}</section>;
 }
 
@@ -153,7 +156,7 @@ function ProductMaterials({editor}:{editor:Editor}) {
     {report?.images.length===0&&<p>上传商品实拍图，或采集同款货源图片后，即可勾选做 AI 洞察。</p>}
     {report&&report.images.length>0&&<div className="pe-material-insights">
       <div className="pe-actions">
-        <h3>AI 素材洞察</h3>
+        <div className="wb-title-label"><h3>AI 素材洞察</h3><HelpTip label="素材洞察">勾选能够确认属于本款的特征，再保存供文案和分镜使用。</HelpTip></div>
         <button className="pe-primary" disabled={!image||!!busy||!editor.online}
           onClick={()=>void save('analyse')}>{busy==='analyse'?'分析中…':'分析选中图片'}</button>
       </div>
@@ -162,7 +165,6 @@ function ProductMaterials({editor}:{editor:Editor}) {
           style={{maxWidth:240,maxHeight:240,objectFit:'contain'}}/>
         <div>
           {image.stale&&<p role="status">原图或商品资料已变化，请重新分析并确认。</p>}
-          {image.observations?.length? <p>勾选能确认属于本款的特征，保存后可用于文案和分镜。</p>:null}
           {image.observations?.map((item,i)=><label key={i} style={{display:'block',marginBottom:8}}>
             <input type="checkbox" checked={checked.includes(i)} disabled={!!busy||image.stale}
               onChange={e=>setChecked(e.currentTarget.checked?[...checked,i]:checked.filter(index=>index!==i))}/>
@@ -192,6 +194,7 @@ function ProductStep({editor}:{editor:Editor}) {
   const gallery=asinReference?.referenceImages||[];
   const checkedColors=colors.filter(color=>color.mainImage).length;
   const source=text(p.sourceUrl);
+  const sourceLink=/^https?:\/\//i.test(source);
   const factsFields=[
     ['name','产品名称'],['targetAudience','目标受众'],['material','材质与成分'],
     ['style','款式'],['dimensions','尺寸与尺码证据'],['packageContents','包装内容'],
@@ -209,21 +212,29 @@ function ProductStep({editor}:{editor:Editor}) {
   return <>
     <Section title="ASIN 采集与洞察" hint="先采集 ASIN，再用原始套图和 Listing 文案运行 AI 洞察。"
       actions={<button onClick={editor.capture}>采集货源</button>}>
-      <form className="pe-actions" onSubmit={e=>{e.preventDefault();void runAsin('capture');}}>
-        <input aria-label="参考 ASIN" placeholder="填写 10 位 ASIN" value={asin} maxLength={10} required pattern="[A-Za-z0-9]{10}" onChange={e=>setAsin(e.currentTarget.value)}/>
-        <select aria-label="ASIN 站点" value={site} onChange={e=>setSite(e.currentTarget.value)}>
-          {['US','UK','JP','DE','FR','IT','ES','CA','IN','MX'].map(code=><option key={code}>{code}</option>)}
-        </select>
-        <button className="pe-primary" disabled={!editor.online||!!asinAction}>{asinAction==='capture'?'采集中…':'1. 采集 ASIN 资料'}</button>
-        <button type="button" onClick={()=>void runAsin('insight')}
-          disabled={!editor.online||!!asinAction||!asinReference?.capturedAt||!gallery.length||
-            asin.trim().toUpperCase()!==asinReference.asin||site!==asinReference.market}>
-          {asinAction==='insight'?'洞察运行中…':'2. 运行 AI 洞察'}</button>
+      <form className="pe-asin-form" onSubmit={e=>{e.preventDefault();void runAsin('capture');}}>
+        <div className="pe-actions pe-asin-fields">
+          <input aria-label="参考 ASIN" placeholder="填写 10 位 ASIN" value={asin} maxLength={10} required pattern="[A-Za-z0-9]{10}" onChange={e=>setAsin(e.currentTarget.value)}/>
+          <select aria-label="ASIN 站点" value={site} onChange={e=>setSite(e.currentTarget.value)}>
+            {['US','UK','JP','DE','FR','IT','ES','CA','IN','MX'].map(code=><option key={code}>{code}</option>)}
+          </select>
+        </div>
+        <div className="pe-actions pe-asin-buttons">
+          <button className="pe-primary" disabled={!editor.online||!!asinAction}>{asinAction==='capture'?'采集中…':'1. 采集 ASIN 资料'}</button>
+          <button type="button" onClick={()=>void runAsin('insight')}
+            disabled={!editor.online||!!asinAction||!asinReference?.capturedAt||!gallery.length||
+              asin.trim().toUpperCase()!==asinReference.asin||site!==asinReference.market}>
+            {asinAction==='insight'?'洞察运行中…':'2. 运行 AI 洞察'}</button>
+        </div>
       </form>
       {asinError&&<p role="alert">{asinError}</p>}
-      <div className="pe-source"><span>{source?'已绑定供应商':'待绑定供应商'}</span><span>参考 ASIN {amazon?.asin||p.sourceImport?.asin||p.asin||'待补充'}</span></div>
-      {amazon?.title&&<p className="pe-source-title">{amazon.title}</p>}
-      {/^https?:\/\//i.test(source)&&<a href={source} target="_blank" rel="noreferrer">打开货源原页</a>}
+      <div className="pe-asin-source">
+        <div className="pe-source"><span>{source?'已绑定供应商':'待绑定供应商'}</span><span>参考 ASIN {amazon?.asin||p.sourceImport?.asin||p.asin||'待补充'}</span></div>
+        {(amazon?.title||sourceLink)&&<div className="pe-asin-reference">
+          {amazon?.title&&<span>{amazon.title}</span>}
+          {sourceLink&&<a href={source} target="_blank" rel="noreferrer">打开货源原页</a>}
+        </div>}
+      </div>
       {Array.isArray(amazon?.bullets)&&amazon.bullets.length>0&&<details><summary>采集五点</summary><ol>{amazon.bullets.map((b:string,i:number)=><li key={i}>{b}</li>)}</ol></details>}
       {asinReference?.capturedAt&&<p role="status">套图 {gallery.length} 张 · 子体 {variants.length} 个 · 主图已核对 {checkedColors}/{colors.length} 色
         {!variants.length&&' · 未读取到颜色变体关系'}</p>}
@@ -318,14 +329,15 @@ function CopyStep({editor}:{editor:Editor}) {
     }catch(error){editor.notify((error as Error).message)}finally{setBusy('')}
   }
   return <>
-    <Section title="文案编辑" hint={editor.market+' 站 · 原文与中文对照 · 自动保存'}
+    <Section title="文案编辑" hint={<>文案自动保存。{markedKeywords.length>0&&<> <span className="pe-keyword-legend exact">黄色实线</span>表示完整词组，<span className="pe-keyword-legend variant">蓝色虚线</span>表示自然变体。悬停在关键词上可查看原词与卖家精灵数据。</>}</>}
       actions={<><button onClick={editor.listingSkills}>文案技能</button><button onClick={editor.history}>版本对比</button><button onClick={editor.saveVersion}>保存版本</button>
         <button disabled={!editor.online} onClick={editor.batchGenerate}>批量生成</button>
         <button id="editor-generate" className="pe-primary" disabled={!editor.online||editor.busy||busy==='generate'} onClick={async()=>{setBusy('generate');try{await editor.generate()}finally{setBusy('')}}}><Sparkles size={15}/>{editor.busy||busy==='generate'?'生成中…':editor.copy.title?'重新生成':'生成文案'}</button></>}>
-      <div id="listingGenerationProgress"/>
-      <div className="pe-actions"><button onClick={()=>setShowTranslation(!showTranslation)}>{showTranslation?'隐藏中文':'显示中文'}</button>
+      <div id="listingGenerationProgress" className="pe-copy-progress"/>
+      <div className="pe-actions pe-copy-actions">
+        <div id="listingGenerationActions"/>
+        <button onClick={()=>setShowTranslation(!showTranslation)}>{showTranslation?'隐藏中文':'显示中文'}</button>
         <a href={'/api/listing/preview?productId='+encodeURIComponent(editor.product.id)} target="_blank" rel="noreferrer">预览完整 Listing</a></div>
-      {markedKeywords.length>0&&<p className="pe-keyword-hint"><span className="pe-keyword-legend exact">黄色实线：完整词组</span> · <span className="pe-keyword-legend variant">蓝色虚线：自然变体</span> · 悬停查看原关键词及卖家精灵数据。</p>}
     </Section>
     {insightVersion!==undefined&&[copy,editor.pending].some(draft=>
       typeof draft?.materialInsightVersion==='string'&&draft.materialInsightVersion!==insightVersion)&&
@@ -386,6 +398,7 @@ function CopyStep({editor}:{editor:Editor}) {
 function DeliveryStep({editor,sets,error,selectedGallery}:{editor:Editor;sets:CreativeSets;error:string;selectedGallery?:SelectedGalleryReadiness}) {
   const [exporting,setExporting]=useState(false);
   const [erpSourceReadyKey,setErpSourceReadyKey]=useState('');
+  const [engineGalleryReady,setEngineGalleryReady]=useState(false);
   const gallery=sets.gallery;
   const colourScope=JSON.stringify([editor.accountId,editor.product.id,editor.product.masterColor,editor.product.generatedGallerySelection,gallery?._projectId]);
   const [colourState,setColourState]=useState<{scope:string;data?:DeliveryColours;error?:string}>({scope:''});
@@ -408,21 +421,23 @@ function DeliveryStep({editor,sets,error,selectedGallery}:{editor:Editor;sets:Cr
   const currentColours=colourState.scope===colourScope?colourState:undefined;
   const colours=colourDeliveryProgress(currentColours?.data);
   const master=masterDeliveryProgress(editor.product,gallery,selectedGallery);
-  const collectionReady=!error&&master.ready&&colours.ready;
+  const collectionReady=engineGalleryReady||!error&&master.ready&&colours.ready;
   const collectionBlockReason=error?'母版记录读取失败，请刷新后重试。':!master.ready?master.reason:currentColours?.error?'变体套图读取失败：'+currentColours.error:colours.reason;
   const finals=Object.entries(sets).flatMap(([kind,plan])=>(plan?.images||[]).flatMap((image,i)=>image.final_url?[{image,i,kind}]:[]));
   const fullText=fields.filter(([key])=>editor.copy[key]).map(([key,label])=>label+'\n'+editor.copy[key]).join('\n\n');
   const checks=[
     ['文案已填写',Boolean(editor.copy.title&&editor.copy.bullets&&editor.copy.description)],
-    ['母版分镜已保存',Boolean(gallery?.images?.length)],
-    [master.imageLabel,master.imagesReady],
-    [master.setLabel,master.setReady],['变体套图检查与 SKU 关联',colours.ready],['已交 ERP 发布',editor.completed===true],
+    ['正式图库来源已保存',engineGalleryReady||Boolean(gallery?.images?.length)],
+    [master.imageLabel,engineGalleryReady||master.imagesReady],
+    [master.setLabel,engineGalleryReady||master.setReady],['变体套图检查与 SKU 关联',engineGalleryReady||colours.ready],['已交 ERP 发布',editor.completed===true],
   ] as const;
   const saveText=()=>{
     const url=URL.createObjectURL(new Blob([fullText],{type:'text/plain;charset=utf-8'})),anchor=document.createElement('a');
     anchor.href=url;anchor.download=(editor.product.sku||editor.product.id)+'-Listing.txt';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
   };
   return <>
+    <EngineDelivery key={editor.accountId+':'+editor.product.id} productId={editor.product.id}
+      accountId={editor.accountId} online={editor.online} onSelection={setEngineGalleryReady}/>
     <ErpCollection key={editor.accountId+':'+editor.product.id+':'+editor.market} productId={editor.product.id} accountId={editor.accountId} market={editor.market} copy={editor.copy} online={editor.online} beforeStart={editor.prepareCollection} deliveryReady={collectionReady} deliveryBlockReason={collectionBlockReason} onVerified={setErpSourceReadyKey}/>
     {editor.market==='US'&&<PublicationFlow key={editor.accountId+':'+editor.product.id} productId={editor.product.id} accountId={editor.accountId} online={editor.online} beforeStart={editor.prepareCollection} saveCommerce={editor.savePublicationCommerce} sourceReadyKey={erpSourceReadyKey}/>} 
     <Section title="自动处理状态" hint="文案和套图完成后交接 ERP，发布受理后档案显示已完成。"
@@ -472,14 +487,18 @@ function Workbench({editor}:{editor:Editor}) {
     return ()=>{controller.abort();clearInterval(timer)};
   },[editor.online,p.id,editor.accountId]);
   const match=query.trim().toLowerCase();
-  const products=editor.products.filter(item=>[item.name,item.sku,item.id].some(value=>text(value).toLowerCase().includes(match)));
+  const products=editor.products.filter(item=>[item.name,item.sku,item.id,item.asin,item.sourceImport?.asin,
+    item.sourceImport?.amazon?.asin,item.editorAsinReference?.asin].some(value=>text(value).toLowerCase().includes(match)));
   const done={product:Boolean(p.material||p.features||p.sourceUrl),copy:Boolean(editor.copy.title),visual:sets.gallery?.set_qa?.ready===true,delivery:editor.completed===true};
   const index=steps.findIndex(([key])=>key===editor.step);
   return <div className="pe-shell">
     <div className="pe-heading"><div><button className="pe-back" onClick={editor.goBack}><ArrowLeft size={16}/> 产品档案</button>
       <h1>Listing 工作台</h1><p>{p.name}</p></div><div className="pe-context product-identity">{editor.identity(p)}</div></div>
+    <CodexOperations key={editor.accountId+':'+p.id+':'+editor.market} productId={p.id} market={editor.market}
+      accountId={editor.accountId} online={editor.online} beforeApproval={editor.prepareCollection}
+      openTasks={()=>{window.location.href='/tasks';}}/>
     <div className="pe-layout"><aside className="pe-rail"><h2>产品项目</h2>
-      <label className="pe-search"><Search size={15}/><input aria-label="搜索产品项目" placeholder="搜索名称、SKU 或 ASIN" value={query} onChange={e=>setQuery(e.currentTarget.value)}/></label>
+      <label className="pe-search"><input aria-label="搜索产品项目" placeholder="搜索名称、SKU 或 ASIN" value={query} onChange={e=>setQuery(e.currentTarget.value)}/><Search size={16} aria-hidden="true"/></label>
       <div className="pe-projects">{products.map(item=><button key={item.id} className="pe-project-button" aria-current={item.id===p.id?'true':undefined}
         onClick={()=>editor.navigate(item.id,'product')}><strong>{item.name}</strong><span className="product-identity">{editor.identity(item)}</span></button>)}
         {!products.length&&<p>没有匹配的产品。</p>}</div></aside>
@@ -490,7 +509,7 @@ function Workbench({editor}:{editor:Editor}) {
           {editor.step==='product'&&<ProductStep editor={editor}/>}
           {editor.step==='copy'&&<CopyStep editor={editor}/>}
           {editor.step==='visual'&&<Tools editor={editor} kind="visual"/>}
-          {editor.step==='delivery'&&<DeliveryStep editor={editor} sets={sets} error={error} selectedGallery={selectedGallery}/>}
+          {editor.step==='delivery'&&<DeliveryStep key={editor.accountId+':'+editor.product.id+':'+editor.market} editor={editor} sets={sets} error={error} selectedGallery={selectedGallery}/>}
         </div>
         {index<3&&<button className="pe-next" onClick={()=>editor.navigate(p.id,steps[index+1][0])}>下一步 · {steps[index+1][1]} <ArrowRight size={15}/></button>}
       </div></div>

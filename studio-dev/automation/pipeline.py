@@ -13,6 +13,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from codex_workbench import call as workbench_call
+
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = ('selection', 'sourcing', 'research', 'listing', 'images', 'export', 'publish', 'verify')
 CHECKS = {
@@ -276,6 +278,61 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 
+def published_children(record, row):
+    pub = record.get('publication')
+    store = json.loads(row['config'])['publishing']['store']
+    if (not isinstance(pub, dict) or pub.get('marketplace') != row['market'] or pub.get('store') != store
+            or not isinstance(pub.get('publish_id'), str) or not re.fullmatch(r'[1-9][0-9]*', pub['publish_id'])
+            or not isinstance(record.get('external_ids'), list) or pub['publish_id'] not in record['external_ids']):
+        raise ValueError('发布回执须匹配本任务的店铺、站点及外部发布编号')
+    skus = pub.get('child_skus')
+    if (not isinstance(skus,list) or not skus or not all(isinstance(s,str) and s and s==s.strip() for s in skus)
+            or len(set(skus))!=len(skus)):
+        raise ValueError('发布回执须记录完整且唯一的子 SKU')
+    return pub
+
+
+def workbench_receipt(db, row, evidence):
+    from urllib.parse import urlencode
+    events = db.execute("SELECT data,created_at FROM events WHERE job_id=? AND stage='publish' AND action='completed' LIMIT 2",
+                        (row['id'],)).fetchall()
+    if len(events) != 1:
+        raise ValueError('缺少唯一原发布回执')
+    record = json.loads(events[0]['data'])
+    pub = published_children(record, row)
+    reference = evidence.get('workbench_publication_id') or record.get('workbench_publication_id')
+    if (not isinstance(reference, str) or not re.fullmatch(r'[A-Za-z0-9_-]{8,100}', reference)
+            or record.get('workbench_publication_id', reference) != reference
+            or not isinstance(evidence.get('external_ids'), list) or pub['publish_id'] not in evidence['external_ids']):
+        raise ValueError('在售核验须引用原工作台发布任务和 ERP 发布编号')
+    query = urlencode({'jobId': reference, 'publishId': pub['publish_id'],
+                       'sourceId': row['source_id'], 'pipelineJobId': row['id']})
+    url = json.loads(row['config'])['execution'].get('workbench_url')
+    if url is not None and (not isinstance(url, str) or not url.strip()):
+        raise ValueError('任务配置缺少有效的工作台地址')
+    receipt = workbench_call('publication-receipt?' + query, workbench_url=url)
+    expected = {k: pub[k] for k in ('publish_id', 'marketplace', 'store')}
+    expected['workbench_publication_id'] = reference
+    if record.get('delivery_scope'):
+        expected['parent_sku'] = record['delivery_scope']['parent_sku']
+    if not isinstance(receipt, dict) or any(receipt.get(k) != v for k, v in expected.items()):
+        raise ValueError('工作台 ERP 回执与原发布号、店铺或站点不同')
+    children = receipt.get('children')
+    if (not isinstance(children, list) or len(children) != len(pub['child_skus'])
+            or any(not isinstance(child, dict) or not isinstance(child.get('sku'), str)
+                   or child.get('status') not in ('online', 'active', 'buyable', 'discoverable')
+                   or not re.fullmatch(r'[A-Z0-9]{10}', str(child.get('asin') or '')) for child in children)
+            or {child['sku'] for child in children} != set(pub['child_skus'])):
+        raise ValueError('工作台 ERP 回执须证明全部原子 SKU 在售且有 ASIN')
+    try:
+        observed = datetime.fromisoformat(receipt['observed_at'].replace('Z', '+00:00'))
+        if not datetime.fromisoformat(events[0]['created_at']) <= observed <= datetime.now(timezone.utc):
+            raise ValueError
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ValueError('请到工作台只读刷新原发布任务，再完成在售核验') from None
+    return receipt
+
+
 def doctor(config, root=ROOT):
     problems = []
     for field in ('platform', 'store', 'quantity', 'shipping_template'):
@@ -412,6 +469,15 @@ class Pipeline:
                     'required_checks': CHECKS[stage], 'config': cfg}
 
     def finish(self, job, token, evidence):
+        if not isinstance(evidence, dict):
+            raise ValueError('阶段证据须为对象')
+        receipt = None
+        initial = self.get(job)
+        if (initial['stage'] == STAGES.index('verify') and token and initial['token'] == token
+                and initial['status'] in ('running', 'uncertain')
+                and evidence.get('job_id') == job and evidence.get('stage') == 'verify'
+                and evidence.get('simulated') is False):
+            receipt = workbench_receipt(self.db, initial, evidence)
         with self.transaction():
             row = self.get(job)
             if row['status'] not in ('running', 'uncertain') or row['token'] != token:
@@ -446,14 +512,18 @@ class Pipeline:
                 if not path.is_absolute() or not path.is_file():
                     raise ValueError('产物必须是存在的绝对文件路径')
                 hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
-            if stage in ('publish', 'verify') and not evidence.get('external_ids'):
-                raise ValueError('必须记录外部SKU/任务号及实际状态')
+            if stage == 'publish':
+                published_children(evidence, row)
+            if stage == 'verify' and receipt is None:
+                raise ValueError('须使用工作台的原始在售回执完成核验')
             reservation = None
             if stage == 'selection':
                 reservation = reserve_selected_candidate(ledger_path, row['market'], row['source_id'], job,
                     evidence['selection_evidence']['dedupe']['ledger_sha256'])
             next_stage = row['stage'] + 1
             event_data = dict(evidence, artifact_sha256=hashes)
+            if receipt is not None:
+                event_data['online_observation'] = receipt
             if reservation: event_data['selection_reservation'] = reservation
             self.event(job, stage, 'completed', event_data)
             status = 'done' if next_stage == len(STAGES) else 'ready'

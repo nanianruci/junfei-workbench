@@ -26,6 +26,7 @@ class CodexOperationsTests(unittest.TestCase):
             patch.object(server, 'DB', root / 'studio.sqlite3'),
             patch.object(operations.app_paths, 'DATA', root),
             patch.object(operations.image_provider,'ROOT',root),
+            patch.object(operations.image_engine, 'DB', root / 'image-engine.sqlite3'),
             patch.object(operations.listing_jobs,'DB',root/'studio.sqlite3'),
             patch.object(operations.agent_center, 'DB', root / 'agent.sqlite3'),
             patch.object(operations.visual_studio, 'DB', root / 'visual.sqlite3'),
@@ -117,10 +118,45 @@ class CodexOperationsTests(unittest.TestCase):
             self.assertEqual(self.call('/api/codex/review', self.review(cancelled), bearer=True)[0], 400)
             stale = self.assign()
             with server.database() as db:
-                db.execute('UPDATE workspace SET revision=8')
+                db.execute("UPDATE workspace SET revision=8, body=json_set(body,'$.products[0].material','wool')")
             self.assertEqual(self.call('/api/codex/review', self.review(stale), bearer=True)[1]['status'], 'stale')
             self.assertIsNone(self.call('/api/codex/next', bearer=True)[1]['assignment'])
             dispatch.assert_not_called()
+
+    def test_unrelated_product_edit_keeps_review_and_rechecks_latest_revision(self):
+        item = self.assign()
+        with server.database() as db:
+            db.execute("UPDATE workspace SET revision=8, body=json_set(body,'$.products[1].name','Renamed')")
+        self.assertEqual(self.call('/api/codex/review', self.review(item), bearer=True)[1]['status'], 'pending')
+        with patch.object(operations.listing_jobs, 'start', return_value={'id':'copy','status':'queued'}) as start:
+            result = self.call('/api/codex/approve', {**self.scope,'requestId':item['request']['requestId']})[1]
+            self.assertEqual(result['jobId'], 'copy')
+            self.assertEqual(start.call_args.args[1]['expectedRevision'], 8)
+
+    def test_distinct_pair_codes_cannot_claim_same_review_and_can_be_revoked(self):
+        item = self.assign()
+        self.assertEqual(self.call('/api/codex/next', bearer=True)[1]['assignment'], item)
+        status = self.call('/api/codex/status?productId=P&market=US')[1]
+        self.assertTrue(status['proposals'][0]['reviewInProgress'])
+        self.assertNotIn('reviewClaim', status['proposals'][0])
+        heartbeat = {'requestId': item['request']['requestId']}
+        self.assertEqual(self.call('/api/codex/heartbeat', heartbeat)[0], 401)
+        code, lease = self.call('/api/codex/heartbeat', heartbeat, bearer=True)
+        self.assertEqual(code, 200)
+        self.assertEqual(lease['requestId'], heartbeat['requestId'])
+        self.assertLessEqual(lease['reviewUntil'], item['expiresAt'])
+        other = self.call('/api/codex/pair', self.scope)[1]['token']
+        first, self.token = self.token, other
+        self.assertEqual(self.call('/api/codex/heartbeat', heartbeat, bearer=True)[0], 400)
+        self.assertIsNone(self.call('/api/codex/next', bearer=True)[1]['assignment'])
+        self.assertEqual(self.call('/api/codex/review', self.review(item), bearer=True)[0], 400)
+        self.token = first
+        self.assertEqual(self.call('/api/codex/review', self.review(item), bearer=True)[1]['status'], 'pending')
+        self.assertEqual(self.call('/api/codex/heartbeat', heartbeat, bearer=True)[0], 400)
+        self.assertEqual(self.call('/api/codex/revoke', self.scope)[0], 200)
+        for token in (first, other):
+            self.token = token
+            self.assertEqual(self.call('/api/codex/status', bearer=True)[0], 401)
 
     def test_linked_cli_product_keeps_original_executor_without_selection_metadata(self):
         with server.database() as db:
@@ -130,12 +166,101 @@ class CodexOperationsTests(unittest.TestCase):
         code, status = self.call('/api/codex/status', bearer=True)
         self.assertEqual(code, 200)
         self.assertEqual(status['selection']['cliTask']['id'], 'original-cli')
+        self.assertEqual(status['checkpoints'], [
+            {'kind':'selectionCli','id':'original-cli','status':'unavailable','market':'US'}])
         self.assertEqual(status['actions'], [])
         code,other=self.call('/api/codex/status?productId=P&market=UK')
         self.assertEqual(code,200)
         self.assertEqual(other['actions'],[])
         self.assertEqual(other['selection']['cliTask']['marketplace'],'US')
         self.assertEqual(self.call('/api/codex/assign', {**self.scope, 'action':self.request()})[0], 400)
+
+    def test_checkpoints_keep_task_completion_gallery_approval_and_publication_distinct(self):
+        image = {'id':'image-job','status':'completed','request':{'mode':'suite'}}
+        gallery = {'accountId':1,'versionId':'gallery-version','approvedAt':100}
+        publication = {'id':'publication-job','markets':['US'],'status':'submitted','usPublishId':'123','canObserveLatestReceipts':True,
+                       'usPublicationObservation':{'status':'publishing','verification':'accepted'}}
+        with patch.object(operations.image_engine,'coordination_tasks',return_value=[image]), \
+                patch.object(operations.image_engine_delivery,'selection',return_value=gallery), \
+                patch.object(operations.publication_flow,'list_jobs',return_value=[publication]):
+            code, status = self.call('/api/codex/status', bearer=True)
+            self.assertEqual(code, 200)
+            self.assertEqual(status['checkpoints'], [
+                {'kind':'image','id':'image-job','status':'completed'},
+                {'kind':'gallery','id':'gallery-version','status':'approval_recorded','approvedAt':100},
+                {'kind':'publication','id':'publication-job','status':'submitted','market':'US',
+                 'externalId':'123','observation':'publishing','observationVerified':'accepted'},
+            ])
+            code, status = self.call('/api/codex/status?productId=P&market=UK')
+            self.assertEqual(code, 200)
+            self.assertNotIn('publication', {row['kind'] for row in status['checkpoints']})
+            self.assertEqual(status['publication'], [])
+            self.assertNotIn('observe_publication', {row['type'] for row in status['actions']})
+
+    def test_prior_image_request_still_controls_dispatch_after_thirty_newer_repairs(self):
+        engine = operations.image_engine
+        old = {'id':'original', 'productId':'P', 'requestId':'original-request',
+               'request':{'mode':'suite','count':7,'sourceVariant':{'colorKey':'blue'}},
+               'status':'submission_unknown'}
+        with engine.db() as db:
+            tasks = [old] + [{'id':f'repair-{n}', 'productId':'P', 'requestId':f'r{n}',
+                              'request':{'mode':'repair'}, 'status':'completed'} for n in range(31)]
+            db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?)', [
+                (t['id'], 'P', t['requestId'], json.dumps(t), n) for n, t in enumerate(tasks)])
+        db.close()
+        with patch.object(operations, 'formal_suite_target', return_value={'colorKey':'blue'}):
+            for state in ('submission_unknown', 'completed'):
+                with engine.db() as db:
+                    db.execute('UPDATE tasks SET body=? WHERE id=?', (json.dumps(dict(old, status=state)), old['id']))
+                db.close()
+                snapshot = operations.status(1, server.database, 'P', 'US')
+                self.assertNotIn('generate_image_suite', {a['type'] for a in snapshot['actions']})
+                self.assertIn('original', {r['id'] for r in snapshot['imageEngine']['tasks']})
+                self.assertNotIn('repair-0', {r['id'] for r in snapshot['imageEngine']['tasks']})
+
+    def test_native_image_engine_task_is_observable_without_legacy_image_dispatch(self):
+        task = {'id':'a'*32,'productId':'P','status':'completed','updated':1,
+                'request':{'mode':'suite'},'results':[{'index':0,'review':{'blocking':False,'identityPreserved':True}}]}
+        with patch.object(operations.image_engine,'coordination_tasks',return_value=[task]), \
+                patch.object(operations.visual_studio,'list_projects',return_value={
+                    'projects':[{'id':'legacy','market':'US','deliverable':'gallery','plan':{'slots':[{}]}}],
+                    'runs':[]}):
+            snapshot = operations.status(1,server.database,'P','US')
+            self.assertIn({'type':'observe_image','label':'核对原生作图任务',
+                           'target':{'taskId':task['id']},
+                           'authority':operations.authority('observe_image')},snapshot['actions'])
+            self.assertEqual(snapshot['imageEngine']['tasks'][0]['reviews'][0]['blocking'],False)
+            self.assertFalse(any(action['type']=='generate_image' for action in snapshot['actions']))
+            request={'revision':snapshot['revision'],'type':'observe_image','target':{'taskId':task['id']},'parameters':{}}
+            assigned=operations.assign(1,server.database,'P','US',request)
+            review=self.review(assigned)
+            operations.submit_review(1,server.database,'P','US',review)
+            with patch.object(operations.image_engine,'get',return_value=task), \
+                    patch.object(operations.image_engine,'poll',return_value=task):
+                result=operations.approve(1,server.database,'P','US',assigned['request']['requestId'])
+            self.assertEqual((result['jobId'],result['jobStatus']),('a'*32,'completed'))
+
+    def test_approved_formal_suite_uses_native_image_engine_with_frozen_source_and_templates(self):
+        target = {'colorKey':'blue','reference':'/uploads/source.png','sourceSha256':'f'*64,
+                  'templates':[{'id':str(i)} for i in range(1,6)]}
+        with patch.object(operations,'formal_suite_target',return_value=target), \
+                patch.object(operations.image_engine,'coordination_tasks',return_value=[]), \
+                patch.object(operations.image_engine,'start',return_value={'id':'image-task','status':'queued'}) as start, \
+                patch('image_source_variants.prepare',return_value={'source':{'url':'/uploads/bound.png','sha256':'f'*64},
+                      'association':{'receiptId':'a'*64}}):
+            request = {'revision':7,'type':'generate_image_suite','target':target,'parameters':{'brief':'真实七图'}}
+            item = operations.assign(1,server.database,'P','US',request)
+            operations.submit_review(1,server.database,'P','US',self.review(item))
+            start.assert_not_called()
+            request_id = item['request']['requestId']
+            response = operations.approve(1,server.database,'P','US',request_id)
+            self.assertEqual(response['jobId'],'image-task')
+            payload = start.call_args.args[0]
+            self.assertEqual(payload['sourceVariant'], {'receiptId':'a'*64})
+            self.assertEqual(payload['apparelSuite']['pointTemplateIds'], ['1','2'])
+            self.assertEqual(payload['apparelSuite']['lifestyleTemplateIds'], ['3','4','5'])
+            self.assertEqual(payload['apparelSuite']['shotOrder'], ['white','seller','seller','ins','ins','ins','size'])
+            self.assertEqual(start.call_args.kwargs['handoff'],(1,'P','US',request_id))
 
     def test_new_request_cannot_replace_unresolved_handoff(self):
         first=self.assign()

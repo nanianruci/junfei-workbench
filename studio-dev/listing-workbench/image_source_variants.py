@@ -24,6 +24,23 @@ def group(product,key,reference):
 
 def folder():return app_paths.DATA/'image-source-variants'
 
+
+def reviewed_reference_sha(product, key, reference):
+    """Read the exact colour source for a review without downloading or writing files."""
+    import image_engine as engine
+
+    _, receipt_id = group(product, key, reference)
+    saved = folder() / (receipt_id + '.json')
+    if saved.is_file():
+        row = json.loads(saved.read_text('utf-8'))
+        if row['reference'] != reference or row['colorKey'] != key:
+            raise ValueError('已保存颜色原图与本款不符，请重新选择')
+        return freeze(product, {'receiptId': receipt_id}, row['sourceUpload'], engine.asset)['sourceSha256']
+    if reference.startswith('/uploads/'):
+        return engine.asset(reference)[1]
+    return None
+
+
 def prepare(product,data):
     import image_engine as engine
     if not isinstance(data,dict)or set(data)-{'productId','colorKey','reference'}:raise ValueError('颜色选图参数无效')

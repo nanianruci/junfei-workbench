@@ -16,10 +16,11 @@ import subprocess
 import threading
 import time
 import uuid
-from contextlib import closing
+from contextlib import ExitStack, closing
 from urllib.parse import urlsplit
 
 import app_paths
+import runtime_environment
 
 ROOT = app_paths.LIBRARY_ROOT
 DB = ROOT / 'supplier-capture-queue.sqlite3'
@@ -560,19 +561,29 @@ def browser_capture(url, browser=None, resume=False, run_id=None):
     code = (app_paths.APP / 'supplier_capture_runtime.mjs').read_text(encoding='utf-8')
     script = folder / 'capture.mjs'
     script.write_text('const params=' + json.dumps(params, ensure_ascii=False) + ';\n' + code, encoding='utf-8')
-    try:
+    route = browser or {}
+    # Initial creation and an unresolved reconnect have no known target ID yet.
+    bound = route.get('reconnectBoundCreationBrowser') if route.get('reconnectMissing') else route
+    space_id = (bound or {}).get('spaceId')
+    with ExitStack() as locks:
+        if space_id is not None:
+            try:
+                locks.enter_context(runtime_environment.ego_space(space_id))
+            except (ValueError, OSError):
+                return {'status': 'paused', 'reason': 'ego_space_unavailable'}
         # Official Ego runtime; no alternate browser or anonymous network request.
-        subprocess.run([cli, 'nodejs', '-e', f"await import('{script.as_uri()}')"],
-                       timeout=115, capture_output=True, encoding='utf-8')
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    if output.is_file():
-        result = json.loads(output.read_text(encoding='utf-8'))
-        if result.get('status') == 'collected':
-            import supplier_facts
-            value = result['supplier']
-            value.update(supplier_facts.normalize(value))
-            value.update(supplier_facts.image_capture(value, value.get('images', [])))
-            output.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
-        return result
+        try:
+            subprocess.run([cli, 'nodejs', '-e', f"await import('{script.as_uri()}')"],
+                           timeout=115, capture_output=True, encoding='utf-8')
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if output.is_file():
+            result = json.loads(output.read_text(encoding='utf-8'))
+            if result.get('status') == 'collected':
+                import supplier_facts
+                value = result['supplier']
+                value.update(supplier_facts.normalize(value))
+                value.update(supplier_facts.image_capture(value, value.get('images', [])))
+                output.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
+            return result
     return {'status': 'paused', 'reason': 'execution_unknown'}

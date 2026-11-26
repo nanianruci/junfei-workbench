@@ -1,3 +1,4 @@
+import HelpTip from './HelpTip';
 import { useEffect, useState } from "react";
 import type { ColourResources, ColourSettings, Parameter } from "./OfficialColour";
 import "./official-templates.css";
@@ -8,8 +9,7 @@ export function OfficialTemplates({ kind, selected, onSelect, title, description
   useEffect(() => { setError(""); setPage(0); void get("/api/image-templates/catalog?kind=" + kind).then(r => setItems(r.items)).catch(e => setError(String(e))); }, [kind]);
   const filtered = items.filter(i => (!group || i.style?.startsWith(group)) && (i.name + i.id + (i.style || "")).toLowerCase().includes(search.toLowerCase()));
   return <details className="official-library" open>
-    <summary>{title || (kind === "layout" ? "官方版式库 · 240 张原配图与原提示词" : "官方修图模板 · 24 项完整配置")}</summary>
-    {description && <p>{description}</p>}
+    <summary>{title || (kind === "layout" ? "官方版式库 · 240 张原配图与原提示词" : "官方修图模板 · 24 项完整配置")} {description&&<HelpTip label="原模板">{description}</HelpTip>}</summary>
     <div className="ot-toolbar"><input aria-label="搜索官方模板" placeholder="搜索编号或名称" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} />
       {kind === "layout" && <select aria-label="版式分组" value={group} onChange={e => { setGroup(e.target.value); setPage(0); }}><option value="">全部分组</option>{["C", "L", "A", "M"].map(g => <option key={g}>{g}</option>)}</select>}
       <span>{filtered.length} 项 · 已选 {selected.length}</span></div>
@@ -38,8 +38,7 @@ export function OfficialColourControls({ resources, settings, onChange }: { reso
     if (p.type === "float") return <input type="number" min={p.min} max={p.max} step="any" value={Number(value)} onChange={e => set(index, p.key, +e.target.value)} />;
     return <textarea aria-label={p.name} rows={2} defaultValue={JSON.stringify(value)} onBlur={e => { try { set(index, p.key, JSON.parse(e.target.value)); e.target.setCustomValidity(""); } catch { e.target.setCustomValidity("请填写有效JSON数组"); e.target.reportValidity(); } }} />;
   }
-  return <details className="official-colour-controls"><summary>官方原始换色滤镜 · 参数与源码</summary>
-    <p>使用原始 GLSL 链，保留选区外像素与透明度。原配置、参数范围、默认值及执行顺序均可查看。</p>
+  return <details className="official-colour-controls"><summary>官方原始换色滤镜 · 参数与源码 <HelpTip label="换色滤镜">使用原始 GLSL 链，保留选区外像素与透明度。可展开查看原配置、参数范围、默认值和执行顺序。</HelpTip></summary>
     {resources.config.filters.map(f => <details key={f.index}><summary>{f.index}. {f.name} · {f.fs}</summary>
       {f.params.map(p => <label key={p.key}><span>{p.name} <small>{p.min !== undefined ? p.min + "–" + p.max : ""}</small></span>{control(f.index, p)}</label>)}
       <details><summary>原始着色器</summary><pre>{resources.shaders[f.fs]}</pre></details>

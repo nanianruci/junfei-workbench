@@ -48,9 +48,39 @@ def get(task_id):
     return json.loads(row[0])
 
 
-def list_tasks(product_id):
+def by_request(product_id, request_id):
+    if not isinstance(request_id, str) or not re.fullmatch('[a-f0-9-]{20,64}', request_id):
+        raise ValueError('原图片请求编号无效')
+    with closing(db()) as connection:
+        row = connection.execute('SELECT body FROM tasks WHERE product_id=? AND request_id=?',
+                                 (product_id, request_id)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def list_tasks(product_id, *, limit=30, completed_only=False):
     with closing(db()) as c:
-        return [json.loads(r[0]) for r in c.execute('SELECT body FROM tasks WHERE product_id=? ORDER BY updated DESC LIMIT 30',(product_id,))]
+        return [json.loads(row[0]) for row in c.execute(
+            """SELECT body FROM tasks WHERE product_id=?
+               AND (?=0 OR json_extract(body,'$.status')='completed')
+               ORDER BY updated DESC LIMIT ?""",
+            (product_id, int(completed_only), -1 if limit is None else limit))]
+
+
+def coordination_tasks(product_id):
+    """Include every original task that can block a new suite, even beyond the recent history."""
+    with closing(db()) as connection:
+        rows = connection.execute("""
+            WITH recent AS (
+                SELECT id FROM tasks WHERE product_id=? ORDER BY updated DESC, id LIMIT 30
+            )
+            SELECT body FROM tasks WHERE product_id=? AND (
+                id IN (SELECT id FROM recent)
+                OR COALESCE(json_extract(body,'$.status'),'') NOT IN ('failed','needs_revision','completed')
+                OR (json_extract(body,'$.status')='completed' AND json_extract(body,'$.request.mode')='suite'
+                    AND json_extract(body,'$.request.count')=7)
+            ) ORDER BY updated DESC, id
+        """, (product_id, product_id))
+        return [json.loads(row[0]) for row in rows]
 
 
 def asset(url):
@@ -248,7 +278,7 @@ def default_art_direction(data,product_id):
     return 'legacy-v1' if data.get('preserveSourcePixels') is True else 'template-led-v1'
 
 
-def start(data,product):
+def start(data,product,*,handoff=None):
     mode=data.get('mode')
     if mode not in MODES:raise ValueError('请选择套图、修图或换色')
     request_id=data.get('requestId')
@@ -290,8 +320,14 @@ def start(data,product):
             'noText':data.get('noText',True) is not False,'editTask':edit_task,'options':options}
     if data.get('sourceVariant') is not None:
         import image_source_variants
+        if mode == 'repair' and data.get('generatedColourVariant') is not None:
+            if len(refs) != 2:
+                raise ValueError('颜色变体需要原母版和一张真实同款目标照片')
+            variant_source = refs[1]
+        else:
+            variant_source = options.get('originalSource') if mode == 'colour' else refs[0]
         recipe['sourceVariant']=image_source_variants.freeze(product,data['sourceVariant'],
-            options.get('originalSource') if mode=='colour' else refs[0],asset,
+            variant_source,asset,
             normalized_source=refs[0] if mode=='colour' else None)
     # Freeze every ancillary file too: a later browser upload cannot change a
     # mask/reference behind a saved job without detection.
@@ -483,17 +519,27 @@ def start(data,product):
         recipe.update(reusedRepairPlate=plate,reusedRepairPrompt=expert,reusedRepairTaskId=parent['id'])
         recipe['assetSha256'][plate['raw']]=asset(plate['raw'])[1]
     signature=hashlib.sha256(json.dumps(recipe,sort_keys=True).encode()).hexdigest()
-    with LOCK, closing(db()) as c:
+    with LOCK, closing(db()) as c, c:
+        import codex_handoff
+        c.execute('BEGIN IMMEDIATE')
         previous=c.execute('SELECT body FROM tasks WHERE request_id=?',(request_id,)).fetchone()
         if previous:
             old=json.loads(previous[0])
             if old['productId']!=product['id'] or old['signature']!=signature:raise ValueError('请求编号已用于不同输入')
+            codex_handoff.record(c, handoff, old['id'], old['status'])
             return old
+        if handoff and c.execute(
+                """SELECT 1 FROM tasks WHERE product_id=?
+                   AND json_extract(body,'$.status') NOT IN ('completed','failed','needs_revision') LIMIT 1""",
+                (product['id'],)).fetchone():
+            raise ValueError('本款已有图片任务待完成或对账，请核对原任务')
         task={'id':uuid.uuid4().hex,'productId':product['id'],'productName':product.get('name',''),
               'requestId':request_id,'signature':signature,'version':prompts.VERSION,'status':'queued',
-              'created':time.time(),'request':recipe,'results':[],'humanReviewed':False,
+              'created':time.time(),'updated':time.time(),'request':recipe,'results':[],'humanReviewed':False,
               'usage':'creative_candidate','skuBinding':None}
-        save(task)
+        c.execute('INSERT INTO tasks VALUES(?,?,?,?,?)',
+                  (task['id'], product['id'], request_id, json.dumps(task, ensure_ascii=False), task['created']))
+        codex_handoff.record(c, handoff, task['id'], 'queued')
     launch(task['id'])
     return get(task['id'])
 
@@ -557,7 +603,11 @@ def review(task,result,source):
     task['status']='reviewing';save(task)
     if task['request'].get('generatedColourVariant'):
         import generated_colour_variant as variants
+        image_sha = asset(result['image'])[1]
         result['review']=variants.inspect(task['request'],result,source,json_model)
+        if asset(result['image'])[1] != image_sha:
+            raise ValueError('质检时成图文件发生变化')
+        result['imageSha256'] = image_sha
         result['productionMethod']='codex-generated-colour-variant'
         result['generatedColourVariant']={k:v for k,v in task['request']['generatedColourVariant'].items() if k!='template'}
         return
@@ -584,6 +634,7 @@ def review(task,result,source):
         'A single enlarged source crop or generic product photo that discards the assigned design is blocking. '
         'Authorised exact text replaces example text; current garment facts and neutral product colour take priority. '
         'Do not require copying the template product, claims, measurements or brand.' if check_template else '')
+    image_sha = asset(result['image'])[1] if task['request']['mode'] == 'suite' else None
     result['review']=json_model(
         'Compare input source and output pixels. Return {blocking:bool,issues:[str],warnings:[str],'
         'identityPreserved:bool,composition:str,colour:str,edges:str,text:str}. Be concrete; '
@@ -605,6 +656,10 @@ def review(task,result,source):
          'referenceOrder':(['exact_original_crop','delivered_output','full_original'] if result.get('reviewSource') else ['full_original','delivered_output'])},
         [result.get('reviewSource') or source,result['image']]+([source] if result.get('reviewSource') else [])+([result['shot']['constructionAnchor']['url']] if result.get('shot',{}).get('constructionAnchor') else [])+[r['url']for r in extra_roles]+template_refs,
         'independent_image_engine_review')
+    if image_sha is not None:
+        if asset(result['image'])[1] != image_sha:
+            raise ValueError('质检时成图文件发生变化')
+        result['imageSha256'] = image_sha
     if type(result['review'].get('blocking')) is not bool or type(result['review'].get('identityPreserved')) is not bool:
         raise ValueError('质检未返回明确结论；保留成图，未自动通过')
     if check_template:

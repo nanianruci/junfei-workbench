@@ -48,7 +48,7 @@ def create_source_archive(output, root):
     """Corresponding runtime source, UI source, build instructions and licenses only."""
     app = root / 'listing-workbench'
     selected = {}
-    pending = ['desktop_launcher', 'account_runtime', 'agent_library', 'runtime_environment', 'portable_support']
+    pending = ['desktop_launcher', 'account_runtime', 'agent_library', 'runtime_environment', 'portable_support', 'workspace_backup']
     visited = set()
     while pending:
         name = pending.pop()
@@ -81,7 +81,7 @@ def create_source_archive(output, root):
             if source.suffix.lower() in suffixes and source.name not in FORBIDDEN_NAMES:
                 selected['listing-workbench/' + relative.as_posix()] = source.read_bytes()
     for relative in ('AmazonAgentPortable.spec', 'packaging/build_portable.py', 'packaging/smoke_portable.py', 'packaging/test_portable_build.py',
-                     'packaging/portable-config.json', 'packaging/PORTABLE-README.txt', 'packaging/verify_live_discovery.py', 'packaging/verify_live_store.py', 'packaging/verify_live_search.py', 'automation/ego_browser.py', 'automation/shared_browser_space.py', 'automation/test_shared_browser_space.py', 'automation/SHARED-BROWSER-SPACE.md', 'automation/SHARED-BROWSER-ADOPTION.md', 'automation/pipeline.py', 'automation/test_budget_carryover.py', 'automation/test_pipeline.py', 'automation/test_ego_browser.py', 'automation/cyclic_family.py', 'automation/test_cyclic_family.py', 'automation/test_supplemental_rank_search.py',
+                     'packaging/portable-config.json', 'packaging/PORTABLE-README.txt', 'packaging/verify_live_discovery.py', 'packaging/verify_live_store.py', 'packaging/verify_live_search.py', 'automation/ego_browser.py', 'automation/shared_browser_space.py', 'automation/test_shared_browser_space.py', 'automation/SHARED-BROWSER-SPACE.md', 'automation/SHARED-BROWSER-ADOPTION.md', 'automation/pipeline.py', 'automation/codex_workbench.py', 'automation/test_budget_carryover.py', 'automation/test_pipeline.py', 'automation/test_ego_browser.py', 'automation/cyclic_family.py', 'automation/test_cyclic_family.py', 'automation/test_supplemental_rank_search.py',
                      'junfei-publisher/ego_link.py', 'junfei-publisher/package.json', 'junfei-publisher/package-lock.json'):
         source = root / relative
         if source.is_file():
@@ -95,6 +95,7 @@ def create_source_archive(output, root):
         source = root / relative
         if source.is_file():
             selected[relative] = source.read_bytes()
+    selected['automation/browser_space_lock.py'] = (root / 'automation/browser_space_lock.py').read_bytes()
     selected['automation/config.json'] = (root / 'packaging/portable-config.json').read_bytes()
     selected['README-BUILD.txt'] = (
         'Corresponding source for AmazonAgentPortable, AGPL-3.0-only.\n'
@@ -127,6 +128,7 @@ def prepare_stage(destination, root=ROOT):
     (runtime / 'junfei-publisher').mkdir()
     (runtime / 'automation/config.json').write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
     shutil.copy2(root / 'automation/ego_browser.py', runtime / 'automation/ego_browser.py')
+    shutil.copy2(root / 'automation/browser_space_lock.py', runtime / 'automation/browser_space_lock.py')
     shutil.copy2(root / 'junfei-publisher/ego_link.py', runtime / 'junfei-publisher/ego_link.py')
     for name in MODULES:
         shutil.copy2(root / 'junfei-publisher' / name, runtime / 'junfei-publisher' / name)

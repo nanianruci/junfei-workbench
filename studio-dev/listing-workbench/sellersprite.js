@@ -5,11 +5,9 @@ renderSettings=async function(){
   const panel=document.createElement('section');
   const local=typeof localWorkbenchMode!=='undefined'&&localWorkbenchMode;
   panel.id='sellerSpriteSettings';panel.className='panel box';panel.style.cssText='max-width:760px;margin-top:22px';
-  panel.innerHTML=`<h2>卖家精灵 MCP${local?'':' · 全员共用'}</h2>
-    <p>连接官方 MCP 获取 ASIN 详情、关键词中文翻译、月搜索量及自然排名。需要卖家精灵 MCP 密钥和相应额度。</p>
+  panel.innerHTML=`<div class="wb-title-label"><h2>卖家精灵 MCP${local?'':' · 全员共用'}</h2>${workbenchHelp('连接官方 MCP 获取 ASIN 详情、关键词、月搜索量和自然排名。相同查询共享原始数据缓存，详情保留 7 天，关键词和评论保留 24 小时。AI 分析仍单独调用模型。','卖家精灵 MCP')}</div>
     <p style="margin-top:12px"><a href="https://www.sellersprite.com/v3/mcp-manager?tab=keys" target="_blank" rel="noopener">打开 MCP 密钥管理</a> · <a href="https://www.sellersprite.com/v3/knowledge/feature/mcp-installation-tutorial" target="_blank" rel="noopener">官方接入教程</a></p>
-    <p class="notice">共享查询缓存已启用：商品详情保留7天，反查词、拓展词和评论保留24小时。同站点、同查询参数重复读取不再调用数据接口；到期后自动更新。失败或空结果不缓存。仅共享卖家精灵原始公开数据，AI分析仍单独调用模型。</p><form id="sellerSpriteForm"><label class="field"><span>MCP 密钥 / 快速集成 URL</span><div style="display:flex;gap:8px"><input id="sellerSpriteKey" type="password" autocomplete="off" placeholder="粘贴密钥或官方快速集成 URL；留空保留已保存配置" style="flex:1;min-width:0"><button type="button" class="btn" id="sellerSpriteEye" aria-label="显示卖家精灵密钥">显示</button></div></label>
-    <p class="sub">${local?'密钥加密保存在这台电脑。':'由管理员统一配置，所有账号共用 MCP 与额度；产品数据仍按账号独立。密钥在服务器加密保存。'} 连接地址 https://mcp.sellersprite.com/mcp</p>
+    <form id="sellerSpriteForm"><label class="field"><span>MCP 密钥 / 快速集成 URL</span><div style="display:flex;gap:8px"><input id="sellerSpriteKey" type="password" autocomplete="off" placeholder="粘贴密钥或官方快速集成 URL；留空保留已保存配置" style="flex:1;min-width:0"><button type="button" class="btn" id="sellerSpriteEye" aria-label="显示卖家精灵密钥">显示</button></div></label>
     <p id="sellerSpriteState" role="status" style="margin:14px 0">正在读取配置…</p>
     <div class="actions"><button class="btn primary" id="sellerSpriteSave">保存配置</button><button type="button" class="btn" id="sellerSpriteTest">测试连接并获取工具</button><button type="button" class="btn" id="sellerSpriteClear">清除密钥</button></div></form>
     <p id="sellerSpriteResult" role="status" style="margin-top:14px"></p>`;

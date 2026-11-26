@@ -48,7 +48,12 @@ jobs:
           node --test @tests
       - name: Check workbench Python core
         working-directory: studio-dev/listing-workbench
-        run: python -X utf8 -m unittest test_accounts test_codex_operations test_listing_jobs test_listing_job_api test_agent_erp_collection test_workflow_recovery test_erp_collection test_publication_flow test_publication_api test_publication_recovery test_images test_market_research
+        run: python -X utf8 -m unittest test_accounts test_codex_operations test_agent_api test_agent_handoff test_listing_jobs test_listing_job_api test_agent_erp_collection test_workflow_recovery test_erp_collection test_publication_flow test_publication_api test_publication_recovery test_images test_market_research test_store_rotation_setup test_store_rotation test_image_engine_delivery test_image_engine_integration test_generated_colour_variant test_image_source_variants test_runtime_environment test_template_execution
+      - name: Check isolated discovery and supplier coordination
+        working-directory: studio-dev/listing-workbench
+        env:
+          JUNFEI_ACCOUNT_DATA: '${{ runner.temp }}/junfei-discovery-account'
+        run: python -X utf8 -m unittest test_discovery_live_coordinated test_discovery_live_coordinated_adversarial test_supplier_capture test_supplier_capture_lifecycle
       - name: Check automation and packaging
         run: |
           python -X utf8 -m unittest discover -s studio-dev/automation -p 'test_*.py'

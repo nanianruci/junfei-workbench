@@ -54,11 +54,7 @@ def inspect_before_copy(task):
         return {'ok': False, 'issues': [str(error)]}
 
 
-def prepare(user, tid, data):
-    if not isinstance(data, dict):
-        raise ValueError('接续设置格式无效')
-    if data.get('confirmPaidText') is not True or data.get('acknowledgeBudgetNotHardCap') is not True:
-        raise ValueError('请明确同意研究与文案可能消耗费用，并确认预算记录不是账单硬上限')
+def copy_parameters(data):
     budget = data.get('budgetCny')
     if type(budget) not in (int, float) or not math.isfinite(budget) or budget <= 0:
         raise ValueError('请填写本任务的正数人民币预算')
@@ -68,6 +64,15 @@ def prepare(user, tid, data):
     asins = list(dict.fromkeys(value.upper() for value in re.split(r'[\s,，;；]+', raw.strip()) if value))
     if len(asins) > 5 or any(not re.fullmatch('[A-Z0-9]{10}', value) for value in asins):
         raise ValueError('竞品ASIN须为最多5个有效编号，或留空使用已有研究或前台观察候选')
+    return budget, asins
+
+
+def prepare(user, tid, data, *, handoff=None):
+    if not isinstance(data, dict):
+        raise ValueError('接续设置格式无效')
+    if data.get('confirmPaidText') is not True or data.get('acknowledgeBudgetNotHardCap') is not True:
+        raise ValueError('请明确同意研究与文案可能消耗费用，并确认预算记录不是账单硬上限')
+    budget, asins = copy_parameters(data)
     with agent.LOCK, closing(agent.connect()) as c, c:
         c.execute('BEGIN IMMEDIATE')
         task = agent.owned(c, user, tid)
@@ -79,6 +84,8 @@ def prepare(user, tid, data):
             if (prior.get('budgetCny') != budget or prior.get('researchAsins') != asins
                     or task.get('executionScope') != SCOPE):
                 raise ValueError('本任务已经设置文案接续；不能通过重复请求更换预算、竞品或执行范围')
+            if handoff and prior.get('codexHandoff')!=list(handoff):
+                raise ValueError('该接续已有另一份授权，请核对原任务')
             return agent.public(task)
         if (task.get('taskMode') != 'production'
                 or (task.get('intake') or {}).get('source') != 'selection-report'
@@ -136,6 +143,10 @@ def prepare(user, tid, data):
                                  'selectionAndFactsChecked': True})
         if revision is not None:
             task['workspaceRevision'] = revision
+        if handoff:
+            import codex_handoff
+            task['copyHandoff']['codexHandoff']=list(handoff)
+            codex_handoff.record(c,handoff,tid,'prepared')
         agent.put(c, task)
         agent.event(c, task, 'copy_handoff_prepared',
                     '已按明确选择排队研究与文案；预算不是硬封顶；未调用模型、未启动任务、未授权图片或ERP',

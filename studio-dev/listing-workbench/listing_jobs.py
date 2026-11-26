@@ -253,7 +253,8 @@ def recover(conn,job):
         save(conn,job)
 
 
-def start(owner,data):
+def start(owner,data,*,handoff=None):
+    import codex_handoff
     account(owner)
     if not isinstance(data,dict) or set(data)-{'productId','market','requestId','expectedRevision'}:
         raise ValueError('文案任务参数无效')
@@ -272,16 +273,24 @@ def start(owner,data):
             job=json.loads(existing['body'])
             if job['productId']!=pid or job['market']!=market:raise ValueError('此请求编号属于其他产品或站点')
             recover(conn,job)
+            codex_handoff.record(conn,handoff,job['id'],'reused')
             return public(job,include_result=True,reused=True)
         existing=conn.execute('SELECT body FROM listing_generation_jobs WHERE owner=? AND product_id=? AND market=? '
             "AND status IN ('queued','running','ready','needs_review') ORDER BY created DESC,id DESC LIMIT 1",(owner,pid,market)).fetchone()
         if existing:
             job=json.loads(existing['body']);recover(conn,job)
+            codex_handoff.record(conn,handoff,job['id'],'reused')
             return public(job,include_result=True,reused=True)
         revision,state=workspace(conn)
         if data.get('expectedRevision') is not None and data['expectedRevision']!=revision:
             raise ValueError('工作空间版本已变化，请保存并刷新当前资料后再生成')
         product=product_for(state,pid)
+        import discovery_intake
+        discovery_intake.assert_web_available(DB.parent, owner, pid)
+        # Research intake and standalone copy have different evidence requirements.
+        from codex_operations import selection_required
+        if selection_required(owner, product, market):
+            raise ValueError('本款来自选品流程，请在任务中心沿原选品任务接续或核对文案')
         previous=(product.get('listingGeneration') or {}).get(market) or {}
         if previous.get('status')=='uncertain':
             raise ValueError('上次文案生成结果未知，请先核对原模型回执，不能重复付费生成')
@@ -300,6 +309,7 @@ def start(owner,data):
             'inputDigest':digest(snapshot),'inputSnapshot':snapshot,'sourceRevision':revision}
         conn.execute('INSERT INTO listing_generation_jobs VALUES(?,?,?,?,?,?,?,?,?)',
             (job['id'],owner,pid,market,job['status'],job['createdAt'],job['updatedAt'],request,json.dumps(job,ensure_ascii=False)))
+        codex_handoff.record(conn,handoff,job['id'],'queued')
         write_outcome(conn,state,revision,job,initial=True)
         save(conn,job)
         ACTIVE.add(job['id'])

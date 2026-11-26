@@ -37,4 +37,3 @@ test('unknown shadow components do not become supplier descriptions',async()=>{
 test('capture loads lazy description content before collecting and restores the scroll position',async()=>{
  const result=JSON.parse(JSON.stringify(await run('V-DETAIL-U',[],true)));assert.deepEqual(result.images,[url('gallery'),url('detail')]);
 });
-test('employee collector uses the identical corrected extraction source',()=>assert.equal(fs.readFileSync(__dirname+'/员工接入包/extension/collector.js','utf8'),source));

@@ -36,6 +36,7 @@ _ID_TYPES = {'coordinator_id': str, 'engine': str, 'space_id': int, 'owner': str
 _EVIDENCE_SQL = 'CREATE TABLE evidence (stage TEXT PRIMARY KEY, payload TEXT NOT NULL)'
 _STAGES = ('search_capture', 'seller_capture', 'store_capture',
            'title_phrase_capture', 'search_capture')
+_SOURCE_CONFIG = {'browser': {'task_space_id': 1}, 'discovery_browser': {'account_bindings': {}}}
 
 
 class FixtureError(ValueError):
@@ -365,7 +366,7 @@ def _validate_snapshot(snapshot, proof, spec, workspace):
         'mode':'isolated-read-only','owner':owner,'taskSpaceId':spec['space_id'],
         'dedicatedSpace':True}) and (workspace/'unused-cli.exe').read_bytes() ==
         b'OFFLINE FIXTURE: NEVER EXECUTE', 'fixture_configuration_changed')
-    original = json.loads((_AUTOMATION/'config.json').read_text(encoding='utf-8-sig'))
+    original = _SOURCE_CONFIG
     binding_fingerprint = hashlib.sha256(json.dumps({'engine':'ego-lite',
         'account':str(owner),'enabled':True,**expected_binding},sort_keys=True,
         ensure_ascii=True).encode()).hexdigest()
@@ -555,6 +556,8 @@ def _worker(job):
         'enabled':True,'task_space_id':spec['space_id'],
         'task_space_name':'Synthetic fixture only','page_label':'fixture-page'}}}}
     _write_new(project/'automation'/'config.json',config)
+    baseline = workspace / 'source-config.json'
+    _write_new(baseline, _SOURCE_CONFIG)
     _write_new(data/'discovery-live-isolation.json',{'schemaVersion':1,
         'mode':'isolated-read-only','owner':owner,'taskSpaceId':spec['space_id'],
         'dedicatedSpace':True})
@@ -611,8 +614,12 @@ def _worker(job):
             if spec['scenario']=='pause_between_steps':
                 _pause(workspace,'between_steps')
         return original_reserve(account,rid)
+    from browser_space_lock import active_space
     with patch('socket.socket',side_effect=denied), patch('subprocess.Popen',side_effect=denied), \
          patch('os.system',side_effect=denied), patch('subprocess.run',side_effect=fake_run), \
+         patch.object(live.browser.runtime_environment, 'ego_space',
+                      side_effect=lambda space: active_space(space, root=workspace)), \
+         patch.object(live, '_ORIGINAL_CONFIG', baseline), \
          patch.object(threading,'excepthook',thread_error), patch.object(live,'_reserve',reserve):
         live.ledger.ingest(owner,{'cycleId':'fixture-cycle','expectedRevision':0,'events':[seed]})
         request = dict(runId=run_id,cycleId='fixture-cycle',expectedRevision=1,

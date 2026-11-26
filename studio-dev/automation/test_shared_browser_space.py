@@ -15,10 +15,32 @@ import unittest
 from unittest.mock import patch
 
 import shared_browser_space as shared
+from browser_space_lock import active_space
 
 
 DIGEST = hashlib.sha256(b'synthetic request').hexdigest()
 EVIDENCE = hashlib.sha256(b'synthetic validated terminal receipt').hexdigest()
+
+
+class ActiveSpaceTests(unittest.TestCase):
+    def test_default_adapter_lease_rejects_a_second_process_on_same_space(self):
+        script = """import sys
+from browser_space_lock import active_space
+try:
+    with active_space(int(sys.argv[2]), root=sys.argv[1]):
+        print('entered')
+except ValueError:
+    print('busy')
+"""
+        with tempfile.TemporaryDirectory() as root:
+            def observe(space):
+                result = subprocess.run([sys.executable, '-c', script, root, str(space)],
+                                        cwd=Path(__file__).parent, capture_output=True, text=True, check=True)
+                return result.stdout.strip()
+            with active_space(7, root=root):
+                self.assertEqual(observe(7), 'busy')
+                self.assertEqual(observe(8), 'entered')
+            self.assertEqual(observe(7), 'entered')
 
 
 def proof(value, identity):
